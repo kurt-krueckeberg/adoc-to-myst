@@ -673,7 +673,26 @@ def convert_element(elem, level=1):
 
         return out
 
+    if elem.tag == "formalpara":
+        title = elem.find("title")
+        if title is not None:
+            title_text = render_inline(title).strip()
+            if title_text:
+                out += title_text + "\n\n"
+
+        for child in elem:
+            if child.tag == "title":
+                continue
+            out += convert_element(child, level)
+
+        return out
+
     if elem.tag in ("para", "simpara"):
+        literallayout = elem.find("literallayout")
+        if literallayout is not None:
+            # Preserve block semantics instead of flattening through render_inline()
+            return out + convert_element(literallayout, level)
+
         return out + render_inline(elem) + "\n\n"
 
     if elem.tag in ("table", "informaltable"):
@@ -725,7 +744,7 @@ def convert_element(elem, level=1):
             out += f":class: {role}\n"
         out += "\n"
         out += text.rstrip("\n")
-        out += "\n```\n\n" 
+        out += "\n```\n\n"
         return out
 
     for child in elem:
