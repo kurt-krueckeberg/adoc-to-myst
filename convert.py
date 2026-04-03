@@ -246,9 +246,6 @@ def convert_anchor(elem):
 def convert_bibliography(elem, level=1):
     out = ""
 
-    if "id" in elem.attrib:
-        out += f"({elem.attrib['id']})=\n\n"
-
     title = elem.find("title")
     if title is not None:
         out += "#" * level + " " + render_inline(title) + "\n\n"
