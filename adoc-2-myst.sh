@@ -95,7 +95,7 @@ xsltproc \
   "$DOC5_NONS" > "$DOC4"
 
 # --- Step 4 ---
-python3 /home/kurt/sphinx-nla/convert.py "$DOC4" > "$OUTPUT_MD"
+python3 ./convert.py "$DOC4" > "$OUTPUT_MD"
 
 echo "Done: $OUTPUT_MD"
 echo "DocBook 4 file: $DOC4"
