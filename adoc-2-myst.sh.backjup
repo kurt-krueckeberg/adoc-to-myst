@@ -2,9 +2,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR"
-
 OUTPUT_OVERRIDE=""
 DOC4_DIR_OVERRIDE=""
 INPUT=""
@@ -75,7 +72,7 @@ else
 fi
 
 # --- Configure dbcookbook location ---
-DBCOOKBOOK_DIR="${DBCOOKBOOK_DIR:-$REPO_ROOT/dbcookbook}"
+DBCOOKBOOK_DIR="${DBCOOKBOOK_DIR:-$HOME/temp/dbcookbook}"
 XSL_DIR="$DBCOOKBOOK_DIR/en/xml/structure/db5-to-db4"
 XSL_FILE="$XSL_DIR/db5to4.xsl"
 
@@ -98,7 +95,7 @@ xsltproc \
   "$DOC5_NONS" > "$DOC4"
 
 # --- Step 4 ---
-python3 "$SCRIPT_DIR/convert.py" "$DOC4" > "$OUTPUT_MD"
+python3 ./convert.py "$DOC4" > "$OUTPUT_MD"
 
 echo "Done: $OUTPUT_MD"
 echo "DocBook 4 file: $DOC4"
