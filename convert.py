@@ -444,16 +444,18 @@ def reduce_ratio(ints):
         return ints
     return [n // g for n in ints]
 
-
 def widths_from_colspecs(elem, prefer_ratio=True):
     """
     Read <colspec colwidth="..."> and return a MyST widths string.
 
-    If prefer_ratio is True, return the lowest whole-number ratio:
-      42.5*,85*,297.5* -> '1 2 7'
+    If prefer_ratio is True, return a simple whole-number ratio by
+    normalizing against the smallest column width and rounding.
 
-    Otherwise return integer percentages:
-      17*,72.25*,335.75* -> '4 17 79'
+    Examples:
+      8.3333*,25*,16.6666*,8.3333*,25*,16.6668* -> '1 3 2 1 3 2'
+      85*,42.5*,42.5*,42.5* -> '2 1 1 1'
+
+    Otherwise return integer percentages.
     """
     tgroup = elem.find("tgroup")
     if tgroup is None:
@@ -474,8 +476,15 @@ def widths_from_colspecs(elem, prefer_ratio=True):
         return None
 
     if prefer_ratio:
-        ints = decimals_to_scaled_ints(raw)
-        ratio = reduce_ratio(ints)
+        smallest = min(raw)
+        if smallest == 0:
+            return None
+
+        ratio = []
+        for w in raw:
+            n = int((w / smallest).to_integral_value(rounding="ROUND_HALF_UP"))
+            ratio.append(max(1, n))
+
         return " ".join(str(x) for x in ratio)
 
     total = sum(raw)
@@ -498,7 +507,6 @@ def emit_list_table_cell(paras, indent):
         out += f"{indent}  \n"
         out += f"{indent}  {para}\n"
     return out
-
 
 def emit_flat_table_cell(cell, indent):
     attrs = []
