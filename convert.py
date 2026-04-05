@@ -310,30 +310,54 @@ def convert_image(elem):
     out += "```\n\n"
     return out
 
+def _first_listitem_text_node(item):
+    for child in item:
+        if child.tag in ("para", "simpara"):
+            return child
+    return None
+
+def _convert_list(elem, marker_func, indent=0):
+    out = ""
+    index = 1
+
+    for item in elem.findall("listitem"):
+        text_node = _first_listitem_text_node(item)
+        marker = marker_func(index)
+        line_prefix = " " * indent + marker + " "
+
+        if text_node is not None:
+            out += f"{line_prefix}{render_inline(text_node)}\n"
+        else:
+            out += f"{line_prefix}\n"
+
+        for child in item:
+            if child is text_node:
+                continue
+
+            if child.tag == "itemizedlist":
+                out += _convert_list(child, lambda _: "-", indent + 2)
+            elif child.tag == "orderedlist":
+                out += _convert_list(child, lambda n: f"{n}.", indent + 2)
+            elif child.tag in ("para", "simpara"):
+                # extra paragraphs within the same list item
+                text = render_inline(child).strip()
+                if text:
+                    out += " " * (indent + 2) + text + "\n"
+            else:
+                rendered = convert_element(child, level=1).rstrip()
+                if rendered:
+                    for line in rendered.splitlines():
+                        out += " " * (indent + 2) + line + "\n"
+
+        index += 1
+
+    return out
 
 def convert_itemizedlist(elem):
-    out = ""
-    for item in elem.findall("listitem"):
-        para = item.find(".//para")
-        simpara = item.find(".//simpara")
-        node = para if para is not None else simpara
-        if node is not None:
-            out += f"- {render_inline(node)}\n"
-    return out + "\n"
-
+    return _convert_list(elem, lambda _: "-") + "\n"
 
 def convert_orderedlist(elem):
-    out = ""
-    i = 1
-    for item in elem.findall("listitem"):
-        para = item.find(".//para")
-        simpara = item.find(".//simpara")
-        node = para if para is not None else simpara
-        if node is not None:
-            out += f"{i}. {render_inline(node)}\n"
-            i += 1
-    return out + "\n"
-
+    return _convert_list(elem, lambda n: f"{n}.") + "\n"
 
 def cell_has_span(entry):
     return (
@@ -341,7 +365,6 @@ def cell_has_span(entry):
         or "nameend" in entry.attrib
         or "morerows" in entry.attrib
     )
-
 
 def table_has_spans(elem):
     for entry in elem.findall(".//entry"):
