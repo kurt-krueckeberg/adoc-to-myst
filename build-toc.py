@@ -7,9 +7,7 @@ from pathlib import Path
 
 
 ANTORA_YML = Path.home() / "antora-nla" / "antora.yml"
-ANTORA_MODULES = Path.home() / "antora-nla" / "modules"
 SPHINX_TOC = Path.home() / "sphinx-nla" / "source" / "_toc.yml"
-
 
 NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[\]\s*$')
 NAV_REF_RE = re.compile(r'^(?:(?P<module>[^:]+):)?(?P<doc>.+?)\.adoc$')
@@ -27,15 +25,24 @@ def read_antora_nav_list(antora_yml: Path) -> list[str]:
                 in_nav = True
             continue
 
-        if re.match(r'^\S', line):
+        stripped = line.strip()
+
+        if not stripped:
+            continue
+
+        # Ignore comment lines inside the nav block
+        if stripped.startswith("#"):
+            continue
+
+        # A new top-level key ends the nav block
+        if re.match(r'^\S.*:\s*$', line):
             break
 
         m = re.match(r'^\s*-\s+(.+?)\s*$', line)
         if m:
             value = m.group(1).strip()
-            if value.startswith("#"):
-                continue
-            nav_files.append(value)
+            if not value.startswith("#"):
+                nav_files.append(value)
 
     return nav_files
 
@@ -48,11 +55,7 @@ def parse_xref_target(target: str, current_module: str) -> str:
 
     explicit_module = m.group("module")
     doc = m.group("doc")
-
-    if explicit_module:
-        module = explicit_module
-    else:
-        module = current_module
+    module = explicit_module if explicit_module else current_module
 
     return f"{module}/{doc}"
 
@@ -63,8 +66,8 @@ def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
 
     for raw in nav_file.read_text(encoding="utf-8").splitlines():
         line = raw.rstrip()
-
         stripped = line.strip()
+
         if not stripped:
             continue
         if stripped.startswith("//"):
@@ -76,9 +79,8 @@ def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
         if not m:
             continue
 
-        stars = m.group(1)
+        level = len(m.group(1))
         target = m.group(2)
-        level = len(stars)
 
         node = {"file": parse_xref_target(target, current_module)}
 
@@ -88,8 +90,7 @@ def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
         if not stack:
             roots.append(node)
         else:
-            parent = stack[-1][1]
-            parent.setdefault("entries", []).append(node)
+            stack[-1][1].setdefault("entries", []).append(node)
 
         stack.append((level, node))
 
@@ -135,6 +136,7 @@ def main() -> None:
     SPHINX_TOC.write_text("\n".join(lines), encoding="utf-8")
 
     print(f"Wrote {SPHINX_TOC}")
+    print(f"Read {len(nav_list)} nav files")
 
 
 if __name__ == "__main__":
