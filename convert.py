@@ -686,9 +686,6 @@ def convert_flat_table(elem):
 def convert_element(elem, level=1):
     out = ""
 
-    if "id" in elem.attrib:
-        out += f"({elem.attrib['id']})=\n\n"
-
     if elem.tag in ("section", "sect1", "sect2"):
         title = elem.find("title")
         if title is not None:
