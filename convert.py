@@ -751,6 +751,24 @@ def render_entry_blocks(entry, level=1):
             out += convert_element(child, level)
     return out.strip()
 
+def render_literallayout_text(elem):
+    out = elem.text or ""
+
+    for child in elem:
+        if child.tag == "phrase":
+            inner = render_inline(child)
+
+            if child.attrib.get("role", "") == "line-through":
+                out += f"~~{inner}~~"
+            else:
+                out += inner
+        else:
+            out += render_inline(child)
+
+        if child.tail:
+            out += child.tail
+
+    return out
 
 def convert_image_layout_table(elem):
     rows = table_rows_direct(elem)
@@ -960,9 +978,9 @@ def convert_element(elem, level=1):
         return out + convert_admonition(elem)
 
     if elem.tag == "literallayout":
-        text = elem.text or ""
+        text = render_literallayout_text(elem)
         role = elem.attrib.get("role", "").strip()
-
+    
         out += "```{code-block} text\n"
         if role:
             out += f":class: {role}\n"
