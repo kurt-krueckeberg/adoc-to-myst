@@ -294,16 +294,31 @@ def convert_bibliodiv(elem, level=1):
 
     return out
 
+def normalize_image_path(src):
+    src = (src or "").strip()
+    if not src:
+        return src
+
+    # Leave absolute URLs and already-qualified paths alone.
+    if "://" in src or src.startswith("/") or "/" in src:
+        return src
+
+    return f"images/{src}"
+
 def convert_image(elem):
     img = elem.find(".//imagedata")
     if img is None:
         return ""
 
-    src = img.attrib.get("fileref", "")
+    src = normalize_image_path(img.attrib.get("fileref", ""))
+    if not src:
+        return ""
+
     title = elem.find(".//title")
     caption = render_inline(title) if title is not None else ""
 
     out = f"```{{figure}} {src}\n"
+    out += f":target: {src}\n"
     if caption:
         out += caption + "\n"
     out += "```\n\n"

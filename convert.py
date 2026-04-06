@@ -315,13 +315,18 @@ def convert_image(elem):
         return ""
 
     title = elem.find(".//title")
-    caption = render_inline(title) if title is not None else ""
+    caption = render_inline(title).strip() if title is not None else ""
 
-    out = f"```{{figure}} {src}\n"
-    out += f":target: {src}\n"
     if caption:
+        out = f"```{{figure}} {src}\n"
+        out += ":class: antora-self-link\n\n"
         out += caption + "\n"
-    out += "```\n\n"
+        out += "```\n\n"
+    else:
+        out = f"```{{image}} {src}\n"
+        out += ":class: antora-self-link\n"
+        out += "```\n\n"
+
     return out
 
 def _first_listitem_text_node(item):
