@@ -658,6 +658,7 @@ def convert_simple_list_table(elem):
 
     out += ":::\n\n"
     return out
+
 def entry_children(elem):
     return [child for child in elem if isinstance(child.tag, str)]
 
@@ -775,13 +776,29 @@ def convert_image_layout_table(elem):
     out += "::::\n\n"
     return out
 
-
 def convert_literal_parallel_table(elem):
     rows = table_rows_direct(elem)
     if not rows:
         return ""
 
-    left_cell, right_cell = rows[0]
+    header_rows = header_rows_from_table(elem)
+    if header_rows == 0:
+        body_rows = rows
+    elif header_rows == 1:
+        if len(rows) < 2:
+            return ""
+        body_rows = rows[1:]
+    else:
+        return ""
+
+    if len(body_rows) != 1:
+        return ""
+
+    row = body_rows[0]
+    if len(row) != 2:
+        return ""
+
+    left_cell, right_cell = row
 
     left = render_entry_blocks(left_cell).strip()
     right = render_entry_blocks(right_cell).strip()
@@ -801,6 +818,33 @@ def convert_literal_parallel_table(elem):
 
     out += "::::\n\n"
     return out
+
+def is_literal_parallel_table(elem):
+    if table_has_spans(elem):
+        return False
+
+    header_rows = header_rows_from_table(elem)
+    rows = table_rows_direct(elem)
+    if not rows:
+        return False
+
+    if header_rows == 0:
+        body_rows = rows
+    elif header_rows == 1:
+        if len(rows) < 2:
+            return False
+        body_rows = rows[1:]
+    else:
+        return False
+
+    if len(body_rows) != 1:
+        return False
+
+    row = body_rows[0]
+    if len(row) != 2:
+        return False
+
+    return entry_is_literal_only(row[0]) and entry_is_literal_only(row[1])
 
 def convert_table(elem):
     title = elem.find("title")
