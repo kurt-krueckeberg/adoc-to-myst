@@ -311,10 +311,14 @@ def convert_image(elem):
         return ""
 
     src = normalize_image_path(img.attrib.get("fileref", ""))
+    if not src:
+        return ""
+
     title = elem.find(".//title")
     caption = render_inline(title) if title is not None else ""
 
     out = f"```{{figure}} {src}\n"
+    out += f":target: {src}\n"
     if caption:
         out += caption + "\n"
     out += "```\n\n"
