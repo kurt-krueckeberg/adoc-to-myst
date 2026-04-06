@@ -528,6 +528,20 @@ def emit_list_table_cell(paras, indent):
         out += f"{indent}  {para}\n"
     return out
 
+def emit_flat_table_first_cell(paras):
+    out = ""
+    first_lines = paras[0].splitlines() or [""]
+    out += f"   * - {first_lines[0]}\n"
+    for line in first_lines[1:]:
+        out += f"       {line}\n"
+
+    for para in paras[1:]:
+        out += "       \n"
+        for line in para.splitlines():
+            out += f"       {line}\n"
+
+    return out
+
 def emit_flat_table_cell(cell, indent):
     attrs = []
 
@@ -543,23 +557,20 @@ def emit_flat_table_cell(cell, indent):
     paras = render_cell_paragraphs(cell)
     out = ""
 
-    if attrs:
-        out += f"{indent}- {paras[0]}\n"
-  
-        for para in paras[1:]:
-          out += f"{indent}  \n"
-          for line in para.splitlines():
-              out += f"{indent}  {line}\n"
-  
-        for attr in attrs:
-            out += f"{indent}  {attr}\n"
-    else:
-        out += f"{indent}- {paras[0]}\n"
-        for para in paras[1:]:
-            out += f"{indent}  \n"
-            for line in para.splitlines():
-                out += f"{indent}  {line}\n"         
-    
+    first_lines = paras[0].splitlines() or [""]
+
+    out += f"{indent}- {first_lines[0]}\n"
+    for line in first_lines[1:]:
+        out += f"{indent}  {line}\n"
+
+    for para in paras[1:]:
+        out += f"{indent}  \n"
+        for line in para.splitlines():
+            out += f"{indent}  {line}\n"
+
+    for attr in attrs:
+        out += f"{indent}  {attr}\n"
+
     return out
 
 def parse_docbook_with_table_widths(doc):
@@ -647,12 +658,159 @@ def convert_simple_list_table(elem):
 
     out += ":::\n\n"
     return out
+def entry_children(elem):
+    return [child for child in elem if isinstance(child.tag, str)]
+
+
+def is_empty_entry(entry):
+    if (entry.text or "").strip():
+        return False
+    for child in entry:
+        if isinstance(child.tag, str):
+            return False
+        if (child.tail or "").strip():
+            return False
+    return True
+
+def entry_is_image_only(entry):
+    children = entry_children(entry)
+    if not children:
+        return False
+
+    return all(child.tag in ("mediaobject", "figure", "informalfigure") for child in children)
+
+def entry_is_literal_only(entry):
+    children = entry_children(entry)
+    if not children:
+        return False
+    return all(child.tag == "literallayout" for child in children)
+
+
+def table_rows_direct(elem):
+    rows = []
+    for row in elem.findall(".//row"):
+        cells = row.findall("entry")
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+def is_image_layout_table(elem):
+    if header_rows_from_table(elem) != 0:
+        return False
+    if table_has_spans(elem):
+        return False
+
+    rows = table_rows_direct(elem)
+    if not rows:
+        return False
+
+    saw_nonempty = False
+    for row in rows:
+        for cell in row:
+            if is_empty_entry(cell):
+                continue
+            saw_nonempty = True
+            if not entry_is_image_only(cell):
+                return False
+
+    return saw_nonempty
+
+def is_literal_parallel_table(elem):
+    if table_has_spans(elem):
+        return False
+
+    header_rows = header_rows_from_table(elem)
+    rows = table_rows_direct(elem)
+    if not rows:
+        return False
+
+    if header_rows == 0:
+        body_rows = rows
+    elif header_rows == 1:
+        if len(rows) < 2:
+            return False
+        body_rows = rows[1:]
+    else:
+        return False
+
+    if len(body_rows) != 1:
+        return False
+
+    row = body_rows[0]
+    if len(row) != 2:
+        return False
+
+    return entry_is_literal_only(row[0]) and entry_is_literal_only(row[1])
+
+def render_entry_blocks(entry, level=1):
+    out = ""
+    for child in entry:
+        if isinstance(child.tag, str):
+            out += convert_element(child, level)
+    return out.strip()
+
+
+def convert_image_layout_table(elem):
+    rows = table_rows_direct(elem)
+    if not rows:
+        return ""
+
+    out = "::::{grid} 1 1 2 2\n"
+    out += ":gutter: 2\n\n"
+
+    for row in rows:
+        for cell in row:
+            if is_empty_entry(cell):
+                continue
+
+            content = render_entry_blocks(cell).strip()
+            if not content:
+                continue
+
+            out += ":::{grid-item}\n\n"
+            out += content + "\n\n"
+            out += ":::\n\n"
+
+    out += "::::\n\n"
+    return out
+
+
+def convert_literal_parallel_table(elem):
+    rows = table_rows_direct(elem)
+    if not rows:
+        return ""
+
+    left_cell, right_cell = rows[0]
+
+    left = render_entry_blocks(left_cell).strip()
+    right = render_entry_blocks(right_cell).strip()
+
+    out = "::::{grid} 1 1 2 2\n"
+    out += ":gutter: 2\n\n"
+
+    out += ":::{grid-item}\n\n"
+    if left:
+        out += left + "\n\n"
+    out += ":::\n\n"
+
+    out += ":::{grid-item}\n\n"
+    if right:
+        out += right + "\n\n"
+    out += ":::\n\n"
+
+    out += "::::\n\n"
+    return out
 
 def convert_table(elem):
     title = elem.find("title")
     caption = render_inline(title) if title is not None else ""
 
-    if table_has_spans(elem):
+    if is_image_layout_table(elem):
+        out = convert_image_layout_table(elem)
+    elif is_literal_parallel_table(elem):
+        out = convert_literal_parallel_table(elem)
+    elif table_has_spans(elem):
         out = convert_flat_table(elem)
     else:
         out = convert_simple_list_table(elem)
@@ -672,10 +830,7 @@ def convert_flat_table(elem):
 
     for row in rows:
         first_paras = render_cell_paragraphs(row[0])
-        out += f"   * - {first_paras[0]}\n"
-        for para in first_paras[1:]:
-            out += f"       \n"
-            out += f"       {para}\n"
+        out += emit_flat_table_first_cell(first_paras)
 
         for cell in row[1:]:
             out += emit_flat_table_cell(cell, "     ")
