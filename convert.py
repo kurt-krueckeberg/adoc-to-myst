@@ -747,7 +747,11 @@ def render_literallayout_text(elem):
     out = elem.text or ""
 
     for child in elem:
-        out += render_inline(child)
+        if child.tag == "phrase" and child.attrib.get("role", "") == "line-through":
+            out += f"[struck-through: {render_inline(child)}]"
+        else:
+            out += render_inline(child)
+
         if child.tail:
             out += child.tail
 
