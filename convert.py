@@ -105,8 +105,7 @@ def render_inline(elem):
                 out += f"*{inner}*"
 
         elif child.tag == "xref":
-            target = child.attrib.get("linkend", "")
-            out += f"{{ref}}`{target}`"
+            out += render_xref(child)
 
         elif child.tag == "ulink":
             url = child.attrib.get("url", "")
