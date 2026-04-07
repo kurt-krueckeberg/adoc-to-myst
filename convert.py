@@ -25,15 +25,16 @@ def normalize_docbook_href(target, current_doc):
         target = target[:-5] + ".md"
 
     current_doc = PurePosixPath(current_doc)
-
+    source_root = current_doc.parent.parent
+    
     if ":" in target:
         module, page = target.split(":", 1)
-        target_path = PurePosixPath(module) / page
+        target_path = source_root / module / page
     else:
         target_path = current_doc.parent / target
 
     rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
-    return rel.replace("\\", "/") + fragment
+    return rel.replace("\\", "/") + fragment    
 
 def fallback_label_from_target(target):
     target = (target or "").strip()
