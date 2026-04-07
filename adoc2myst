@@ -50,7 +50,7 @@ if [[ ! -f "$INPUT" ]]; then
   exit 1
 fi
 
-MODULES_DIR = "${INPUT%%/modules/*}/modules"
+MODULES_DIR="${INPUT%%/modules/*}/modules"
 
 if [[ ! -d "$MODULES_DIR" ]]; then
   echo "Error: could not determine modules directory from input: $INPUT"
