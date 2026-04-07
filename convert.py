@@ -56,11 +56,11 @@ def fallback_label_from_target(target):
     target = normalize_docbook_href(target, "dummy.md")
     return PurePosixPath(target).stem
 
-SOURCE_ROOT = Path.home() / "antora-nla" / "modules"
+SOURCE_ROOT = None
 
 def adoc_source_from_target(target):
     target = (target or "").strip()
-    if not target:
+    if not target or SOURCE_ROOT is None:
         return None
 
     target = target.rsplit("#", 1)[0]
@@ -1108,4 +1108,8 @@ def convert(doc, current_doc):
 
 if __name__ == "__main__":
     import sys
+
+    global SOURCE_ROOT
+    SOURCE_ROOT = Path(sys.argv[3])
+
     print(convert(sys.argv[1], sys.argv[2]))
