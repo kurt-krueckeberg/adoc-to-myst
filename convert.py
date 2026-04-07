@@ -146,18 +146,40 @@ def render_xref(elem, current_doc):
     label = escape_markdown_link_text(label)
     return f"[{label}]({href})"
 
-
 def render_link(elem, current_doc):
     # External link wrapped in <link><ulink ...>...</ulink></link>
     ulink = elem.find("ulink")
     if ulink is not None:
-        url = ulink.attrib.get("url", "")
-        url = normalize_docbook_href(url, current_doc)
+        url = ulink.attrib.get("url", "").strip()
+        href = normalize_docbook_href(url, current_doc)
 
         label = "".join(ulink.itertext()).strip()
-        label = escape_markdown_link_text(label)
 
-        return f"[{label or url}]({url})"
+        auto_label = (
+            not label
+            or label == url
+            or label == os.path.basename(url)
+            or label.endswith(".xml")
+        )
+
+        # If this is really an internal DocBook/AsciiDoc cross-reference that
+        # got serialized as a ulink with bogus .xml text, ignore the bogus
+        # label and read the target AsciiDoc page title instead.
+        if auto_label and (
+            ":" in url or url.endswith(".xml") or url.endswith(".adoc") or url.endswith(".md")
+        ):
+            src = adoc_source_from_target(url)
+            if src:
+                title = extract_adoc_title(src)
+                if title:
+                    label = title
+                else:
+                    label = fallback_label_from_target(url)
+            else:
+                label = fallback_label_from_target(url)
+
+        label = escape_markdown_link_text(label)
+        return f"[{label or href}]({href})"
 
     # Internal DocBook link: <link linkend="...">label</link>
     linkend = elem.attrib.get("linkend", "").strip()
