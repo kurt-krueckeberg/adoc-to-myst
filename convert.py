@@ -1109,7 +1109,6 @@ def convert(doc, current_doc):
 if __name__ == "__main__":
     import sys
 
-    global SOURCE_ROOT
     SOURCE_ROOT = Path(sys.argv[3])
 
     print(convert(sys.argv[1], sys.argv[2]))
