@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -63,16 +62,17 @@ else
   trap 'rm -rf "$TMPDIR"' EXIT
 fi
 
-DOC5="$TMPDIR/doc5.xml"
-DOC5_NONS="$TMPDIR/doc5-nons.xml"
-
-# --- doc4 output handling ---
+# --- Intermediate XML output handling ---
 if [[ -n "$DOC4_DIR_OVERRIDE" ]]; then
   mkdir -p "$DOC4_DIR_OVERRIDE"
-  DOC4="$DOC4_DIR_OVERRIDE/doc4.xml"
+  XML_WORK_DIR="$DOC4_DIR_OVERRIDE"
 else
-  DOC4="$TMPDIR/doc4.xml"
+  XML_WORK_DIR="$TMPDIR"
 fi
+
+DOC5="$XML_WORK_DIR/doc5.xml"
+DOC5_NONS="$XML_WORK_DIR/doc5-nons.xml"
+DOC4="$XML_WORK_DIR/doc4.xml"
 
 # --- Output handling ---
 if [[ -n "$OUTPUT_OVERRIDE" ]]; then
@@ -80,6 +80,9 @@ if [[ -n "$OUTPUT_OVERRIDE" ]]; then
 else
   OUTPUT_MD="$(dirname "$INPUT")/${BASENAME}.md"
 fi
+
+# Ensure output directory exists if -o points elsewhere
+mkdir -p "$(dirname "$OUTPUT_MD")"
 
 # --- Configure dbcookbook location ---
 DBCOOKBOOK_DIR="${DBCOOKBOOK_DIR:-$REPO_ROOT/dbcookbook}"
@@ -92,20 +95,22 @@ if [[ ! -f "$XSL_FILE" ]]; then
   exit 1
 fi
 
-# --- Step 1 ---
+# --- Step 1: AsciiDoc -> DocBook 5 ---
 asciidoctor -b docbook "$INPUT" -o "$DOC5"
 
-# --- Step 2 ---
+# --- Step 2: Strip DocBook 5 namespace ---
 sed 's/xmlns="http:\/\/docbook.org\/ns\/docbook"//' "$DOC5" > "$DOC5_NONS"
 
-# --- Step 3 ---
+# --- Step 3: Down-convert DocBook 5 -> DocBook 4 ---
 xsltproc \
   --path "$XSL_DIR" \
   "$XSL_FILE" \
   "$DOC5_NONS" > "$DOC4"
 
-# --- Step 4 ---
+# --- Step 4: DocBook 4 -> MyST Markdown ---
 python3 "$SCRIPT_DIR/convert.py" "$DOC4" > "$OUTPUT_MD"
 
 echo "Done: $OUTPUT_MD"
+echo "DocBook 5 file: $DOC5"
+echo "Namespace-stripped DocBook 5 file: $DOC5_NONS"
 echo "DocBook 4 file: $DOC4"
