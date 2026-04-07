@@ -108,7 +108,7 @@ xsltproc \
   "$DOC5_NONS" > "$DOC4"
 
 # --- Step 4: DocBook 4 -> MyST Markdown ---
-python3 "$SCRIPT_DIR/convert.py" "$DOC4" > "$OUTPUT_MD"
+python3 "$SCRIPT_DIR/convert.py" "$DOC4" "$OUTPUT_MD" > "$OUTPUT_MD"
 
 echo "Done: $OUTPUT_MD"
 echo "DocBook 5 file: $DOC5"
