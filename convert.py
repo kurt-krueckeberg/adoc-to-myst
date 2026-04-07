@@ -4,7 +4,7 @@ import os
 from decimal import Decimal, InvalidOperation
 from math import gcd
 from functools import reduce
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, Path
 
 def normalize_docbook_href(target, current_doc):
     target = (target or "").strip()
@@ -56,6 +56,39 @@ def fallback_label_from_target(target):
     target = normalize_docbook_href(target, "dummy.md")
     return PurePosixPath(target).stem
 
+SOURCE_ROOT = Path.home() / "antora-nla" / "modules"
+
+def adoc_source_from_target(target):
+    target = (target or "").strip()
+    if not target:
+        return None
+
+    target = target.rsplit("#", 1)[0]
+
+    if target.endswith(".xml"):
+        target = target[:-4] + ".adoc"
+    elif target.endswith(".md"):
+        target = target[:-3] + ".adoc"
+
+    if ":" in target:
+        module, page = target.split(":", 1)
+        return SOURCE_ROOT / module / "pages" / page
+
+    return None
+
+def extract_adoc_title(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                if s.startswith("="):
+                    return s.lstrip("=").strip()
+    except OSError:
+        return None
+    return None
+
 def render_xref(elem, current_doc):
     target = (
         elem.attrib.get("linkend", "").strip()
@@ -68,7 +101,15 @@ def render_xref(elem, current_doc):
 
     label = render_inline(elem, current_doc).strip()
     if not label:
-        label = fallback_label_from_target(target)
+        src = adoc_source_from_target(target)
+        if src:
+            title = extract_adoc_title(src)
+            if title:
+                label = title
+            else:
+                label = fallback_label_from_target(target)
+        else:
+            label = fallback_label_from_target(target)
 
     label = escape_markdown_link_text(label)
     return f"[{label}]({href})"
