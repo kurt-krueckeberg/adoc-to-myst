@@ -1028,7 +1028,7 @@ def convert_image_layout_table(elem, current_doc):
     out += "::::\n\n"
     return out
 
-def convert_literal_parallel_table(elem, current_doc):
+def convert_parallel_layout_table(elem, current_doc):
     rows = table_rows_direct(elem)
     if not rows:
         return ""
