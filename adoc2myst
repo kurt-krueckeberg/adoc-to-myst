@@ -50,6 +50,13 @@ if [[ ! -f "$INPUT" ]]; then
   exit 1
 fi
 
+MODULES_DIR = "${INPUT%%/modules/*}/modules"
+
+if [[ ! -d "$MODULES_DIR" ]]; then
+  echo "Error: could not determine modules directory from input: $INPUT"
+  exit 1
+fi
+
 # --- Derive names ---
 BASENAME="$(basename "$INPUT" .adoc)"
 
@@ -108,7 +115,7 @@ xsltproc \
   "$DOC5_NONS" > "$DOC4"
 
 # --- Step 4: DocBook 4 -> MyST Markdown ---
-python3 "$SCRIPT_DIR/convert.py" "$DOC4" "$OUTPUT_MD" > "$OUTPUT_MD"
+python3 "$SCRIPT_DIR/convert.py" "$DOC4" "$OUTPUT_MD" "$MODULES_DIR" > "$OUTPUT_MD"
 
 echo "Done: $OUTPUT_MD"
 echo "DocBook 5 file: $DOC5"
