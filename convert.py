@@ -1,21 +1,39 @@
 import xml.etree.ElementTree as ET
 import re
+import os
 from decimal import Decimal, InvalidOperation
 from math import gcd
 from functools import reduce
 from pathlib import PurePosixPath
 
-def normalize_docbook_href(target):
+def normalize_docbook_href(target, current_doc):
     target = (target or "").strip()
     if not target:
         return target
+
+    if "://" in target or target.startswith("#"):
+        return target
+
+    fragment = ""
+    if "#" in target:
+        target, frag = target.split("#", 1)
+        fragment = "#" + frag
 
     if target.endswith(".xml"):
         target = target[:-4] + ".md"
     elif target.endswith(".adoc"):
         target = target[:-5] + ".md"
 
-    return target
+    current_doc = PurePosixPath(current_doc)
+
+    if ":" in target:
+        module, page = target.split(":", 1)
+        target_path = PurePosixPath(module) / page
+    else:
+        target_path = current_doc.parent / target
+
+    rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
+    return rel.replace("\\", "/") + fragment
 
 def fallback_label_from_target(target):
     target = (target or "").strip()
@@ -27,17 +45,17 @@ def fallback_label_from_target(target):
 
     if ":" in target:
         module, page = target.split(":", 1)
-        page = normalize_docbook_href(page)
+        page = normalize_docbook_href(page, "dummy.md")
         stem = PurePosixPath(page).stem
 
         if stem == "index":
             return module
         return f"{module}:{stem}"
 
-    target = normalize_docbook_href(target)
+    target = normalize_docbook_href(target, "dummy.md")
     return PurePosixPath(target).stem
 
-def render_xref(elem):
+def render_xref(elem, current_doc):
     target = (
         elem.attrib.get("linkend", "").strip()
         or elem.attrib.get("endterm", "").strip()
@@ -45,22 +63,22 @@ def render_xref(elem):
     if not target:
         return ""
 
-    href = normalize_docbook_href(target)
+    href = normalize_docbook_href(target, current_doc)
 
-    label = render_inline(elem).strip()
+    label = render_inline(elem, current_doc).strip()
     if not label:
         label = fallback_label_from_target(target)
 
     label = escape_markdown_link_text(label)
     return f"[{label}]({href})"
 
-def render_link(elem):
+def render_link(elem, current_doc):
     # External link wrapped in <link><ulink ...>...</ulink></link>
     ulink = elem.find("ulink")
     if ulink is not None:
         url = ulink.attrib.get("url", "")
-        if url.endswith(".xml"):
-            url = url[:-4] + ".md"
+
+        url = normalize_docbook_href(url, current_doc)
 
         label = "".join(ulink.itertext()).strip()
         label = escape_markdown_link_text(label)
@@ -70,9 +88,9 @@ def render_link(elem):
     # Internal DocBook link: <link linkend="...">label</link>
     linkend = elem.attrib.get("linkend", "").strip()
     if linkend:
-        href = normalize_docbook_href(linkend)
+        href = normalize_docbook_href(linkend, current_doc)
 
-        label = render_inline(elem).strip()
+        label = render_inline(elem, current_doc).strip()
         if not label:
             label = fallback_label_from_target(linkend)
 
@@ -89,7 +107,7 @@ def escape_markdown_link_text(text):
         return text
     return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
-def render_inline(elem):
+def render_inline(elem, current_doc):
     out = ""
 
     if elem.text:
@@ -98,55 +116,54 @@ def render_inline(elem):
     for child in elem:
         if child.tag == "emphasis":
             role = child.attrib.get("role", "")
-            inner = render_inline(child)
+            inner = render_inline(child, current_doc)
             if role == "strong":
                 out += f"**{inner}**"
             else:
                 out += f"*{inner}*"
 
         elif child.tag == "xref":
-            out += render_xref(child)
+            out += render_xref(child, current_doc)
 
         elif child.tag == "ulink":
             url = child.attrib.get("url", "")
 
-            if url.endswith(".xml"):
-                url = url[:-4] + ".md"
+            url = normalize_docbook_href(url, current_doc)
 
-            label = render_inline(child) or url
+            label = render_inline(child, current_doc) or url
             label = escape_markdown_link_text(label)
             out += f"[{label}]({url})"
 
         elif child.tag == "link":
-            out += render_link(child)
+            out += render_link(child, current_doc)
 
         else:
-            out += render_inline(child)
+            out += render_inline(child, current_doc)
 
         if child.tail:
             out += child.tail
 
     return out.strip() if elem.tag in ("para", "simpara") else out
 
-def render_cell_paragraphs(elem):
+def render_cell_paragraphs(elem, current_doc):
     paras = []
 
     for child in elem:
         if child.tag in ("simpara", "para"):
-            text = render_inline(child)
+            text = render_inline(child, current_doc)
             if text:
                 paras.append(text)
 
     if paras:
         return paras
 
-    text = render_inline(elem)
+    text = render_inline(elem, current_doc)
     return [text] if text else [""]
 
-def render_blocks(elem, level=1):
+def render_blocks(elem, current_doc, level=1):
     out = ""
     for child in elem:
-        out += convert_element(child, level)
+        out += convert_element(child, current_doc, level)
     return out
 
 def is_sidebar_subtitle_candidate(elem):
@@ -172,9 +189,9 @@ def is_sidebar_subtitle_candidate(elem):
 
     return True
 
-def convert_sidebar(elem):
+def convert_sidebar(elem, current_doc):
     title_elem = elem.find("title")
-    title = render_inline(title_elem).strip() if title_elem is not None else ""
+    title = render_inline(title_elem, current_doc).strip() if title_elem is not None else ""
 
     subtitle = None
     body_children = []
@@ -199,19 +216,19 @@ def convert_sidebar(elem):
     out += "\n"
 
     for child in body_children:
-        rendered = convert_element(child)
+        rendered = convert_element(child, current_doc)
         if rendered:
             out += rendered
 
     out += "::::\n\n"
     return out
 
-def convert_blockquote(elem):
+def convert_blockquote(elem, current_doc):
     parts = []
 
     attribution = elem.find("attribution")
     if attribution is not None:
-        attr_text = render_inline(attribution).strip()
+        attr_text = render_inline(attribution, current_doc).strip()
         if attr_text:
             parts.append(f"-- {attr_text}")
 
@@ -219,11 +236,11 @@ def convert_blockquote(elem):
         if child.tag == "attribution":
             continue
         if child.tag in ("para", "simpara"):
-            text = render_inline(child).strip()
+            text = render_inline(child, current_doc).strip()
             if text:
                 parts.append(text)
         else:
-            rendered = convert_element(child).rstrip()
+            rendered = convert_element(child, current_doc).rstrip()
             if rendered:
                 parts.append(rendered)
 
@@ -240,13 +257,13 @@ def convert_blockquote(elem):
     out += "\n"
     return out
 
-def convert_variablelist(elem):
+def convert_variablelist(elem, current_doc):
     out = ""
 
     for entry in elem.findall("varlistentry"):
         terms = []
         for term in entry.findall("term"):
-            text = render_inline(term).strip()
+            text = render_inline(term, current_doc).strip()
             if text:
                 terms.append(text)
 
@@ -259,11 +276,11 @@ def convert_variablelist(elem):
 
         for child in listitem:
             if child.tag in ("para", "simpara"):
-                text = render_inline(child).strip()
+                text = render_inline(child, current_doc).strip()
                 if text:
                     paras.append(text)
             else:
-                rendered = convert_element(child).rstrip()
+                rendered = convert_element(child, current_doc).rstrip()
                 if rendered:
                     other_blocks.append(rendered)
 
@@ -296,23 +313,23 @@ def convert_anchor(elem):
         return ""
     return f"({anchor_id})="
 
-def convert_bibliography(elem, level=1):
+def convert_bibliography(elem, current_doc, level=1):
     out = ""
 
     title = elem.find("title")
     if title is not None:
-        out += "#" * level + " " + render_inline(title) + "\n\n"
+        out += "#" * level + " " + render_inline(title, current_doc) + "\n\n"
 
     for child in elem:
         if child.tag == "title":
             continue
-        rendered = convert_element(child, level + 1)
+        rendered = convert_element(child, current_doc, level + 1)
         if rendered:
             out += rendered
 
     return out
 
-def convert_bibliomixed(elem):
+def convert_bibliomixed(elem, current_doc):
     parts = []
 
     for child in elem:
@@ -321,11 +338,11 @@ def convert_bibliomixed(elem):
             if rendered:
                 parts.append(rendered)
         elif child.tag in ("bibliomisc", "simpara", "para"):
-            text = render_inline(child).strip()
+            text = render_inline(child, current_doc).strip()
             if text:
                 parts.append(text)
         else:
-            rendered = convert_element(child).strip()
+            rendered = convert_element(child, current_doc).strip()
             if rendered:
                 parts.append(rendered)
 
@@ -334,17 +351,17 @@ def convert_bibliomixed(elem):
 
     return "\n\n".join(parts) + "\n\n"
 
-def convert_bibliodiv(elem, level=1):
+def convert_bibliodiv(elem, current_doc, level=1):
     out = ""
 
     title = elem.find("title")
     if title is not None:
-        out += "#" * level + " " + render_inline(title) + "\n\n"
+        out += "#" * level + " " + render_inline(title, current_doc) + "\n\n"
 
     for child in elem:
         if child.tag == "title":
             continue
-        out += convert_element(child, level)
+        out += convert_element(child, current_doc, level)
 
     return out
 
@@ -359,7 +376,7 @@ def normalize_image_path(src):
 
     return f"images/{src}"
 
-def convert_image(elem):
+def convert_image(elem, current_doc):
     img = elem.find(".//imagedata")
     if img is None:
         return ""
@@ -369,7 +386,7 @@ def convert_image(elem):
         return ""
 
     title = elem.find(".//title")
-    caption = render_inline(title).strip() if title is not None else ""
+    caption = render_inline(title, current_doc).strip() if title is not None else ""
 
     if caption:
         out = f"```{{figure}} {src}\n"
@@ -389,7 +406,7 @@ def _first_listitem_text_node(item):
             return child
     return None
 
-def _convert_list(elem, marker_func, indent=0):
+def _convert_list(elem, current_doc, marker_func, indent=0):
     out = ""
     index = 1
 
@@ -399,7 +416,7 @@ def _convert_list(elem, marker_func, indent=0):
         line_prefix = " " * indent + marker + " "
 
         if text_node is not None:
-            out += f"{line_prefix}{render_inline(text_node)}\n"
+            out += f"{line_prefix}{render_inline(text_node, current_doc)}\n"
         else:
             out += f"{line_prefix}\n"
 
@@ -408,15 +425,15 @@ def _convert_list(elem, marker_func, indent=0):
                 continue
 
             if child.tag == "itemizedlist":
-                out += _convert_list(child, lambda _: "-", indent + 2)
+                out += _convert_list(child, current_doc, lambda _: "-", indent + 2)
             elif child.tag == "orderedlist":
-                out += _convert_list(child, lambda n: f"{n}.", indent + 2)
+                out += _convert_list(child, current_doc, lambda n: f"{n}.", indent + 2)
             elif child.tag in ("para", "simpara"):
-                text = render_inline(child).strip()
+                text = render_inline(child, current_doc).strip()
                 if text:
                     out += " " * (indent + 2) + text + "\n"
             else:
-                rendered = convert_element(child, level=1).rstrip()
+                rendered = convert_element(child, current_doc, level=1).rstrip()
                 if rendered:
                     for line in rendered.splitlines():
                         out += " " * (indent + 2) + line + "\n"
@@ -425,11 +442,11 @@ def _convert_list(elem, marker_func, indent=0):
 
     return out
 
-def convert_itemizedlist(elem):
-    return _convert_list(elem, lambda _: "-") + "\n"
+def convert_itemizedlist(elem, current_doc):
+    return _convert_list(elem, current_doc, lambda _: "-") + "\n"
 
-def convert_orderedlist(elem):
-    return _convert_list(elem, lambda n: f"{n}.") + "\n"
+def convert_orderedlist(elem, current_doc):
+    return _convert_list(elem, current_doc, lambda n: f"{n}.") + "\n"
 
 def cell_has_span(entry):
     return (
@@ -444,7 +461,7 @@ def table_has_spans(elem):
             return True
     return False
 
-def convert_admonition(elem):
+def convert_admonition(elem, current_doc):
     tag_to_name = {
         "note": "note",
         "tip": "tip",
@@ -462,11 +479,11 @@ def convert_admonition(elem):
     paras = []
     for child in elem:
         if child.tag in ("simpara", "para"):
-            text = render_inline(child)
+            text = render_inline(child, current_doc)
             if text:
                 paras.append(text)
         else:
-            rendered = convert_element(child)
+            rendered = convert_element(child, current_doc)
             if rendered.strip():
                 paras.append(rendered.strip())
 
@@ -612,7 +629,7 @@ def emit_flat_table_first_cell(paras):
 
     return out
 
-def emit_flat_table_cell(cell, indent):
+def emit_flat_table_cell(cell, current_doc, indent):
     attrs = []
 
     if "morerows" in cell.attrib:
@@ -624,7 +641,7 @@ def emit_flat_table_cell(cell, indent):
     if "namest" in cell.attrib and "nameend" in cell.attrib:
         attrs.append(":cspan: 1")
 
-    paras = render_cell_paragraphs(cell)
+    paras = render_cell_paragraphs(cell, current_doc)
     out = ""
 
     first_lines = paras[0].splitlines() or [""]
@@ -694,7 +711,7 @@ def header_rows_from_table(elem):
     rows = thead.findall("row")
     return len(rows) if rows else 1
 
-def convert_simple_list_table(elem):
+def convert_simple_list_table(elem, current_doc):
     rows = get_rows(elem)
     if not rows:
         return ""
@@ -716,14 +733,14 @@ def convert_simple_list_table(elem):
     out += "\n"
 
     for row in rows:
-        first_paras = render_cell_paragraphs(row[0])
+        first_paras = render_cell_paragraphs(row[0], current_doc)
         out += f"* - {first_paras[0]}\n"
         for para in first_paras[1:]:
             out += f"    \n"
             out += f"    {para}\n"
 
         for cell in row[1:]:
-            paras = render_cell_paragraphs(cell)
+            paras = render_cell_paragraphs(cell, current_doc)
             out += emit_list_table_cell(paras, "  ")
 
     out += ":::\n\n"
@@ -810,28 +827,28 @@ def is_literal_parallel_table(elem):
 
     return entry_is_literal_only(row[0]) and entry_is_literal_only(row[1])
 
-def render_entry_blocks(entry, level=1):
+def render_entry_blocks(entry, current_doc, level=1):
     out = ""
     for child in entry:
         if isinstance(child.tag, str):
-            out += convert_element(child, level)
+            out += convert_element(child, current_doc, level)
     return out.strip()
 
-def render_literallayout_text(elem):
+def render_literallayout_text(elem, current_doc):
     out = elem.text or ""
 
     for child in elem:
         if child.tag == "phrase" and child.attrib.get("role", "") == "line-through":
-            out += f"[struck-through: {render_inline(child)}]"
+            out += f"[struck-through: {render_inline(child, current_doc)}]"
         else:
-            out += render_inline(child)
+            out += render_inline(child, current_doc)
 
         if child.tail:
             out += child.tail
 
     return out
 
-def convert_image_layout_table(elem):
+def convert_image_layout_table(elem, current_doc):
     rows = table_rows_direct(elem)
     if not rows:
         return ""
@@ -844,7 +861,7 @@ def convert_image_layout_table(elem):
             if is_empty_entry(cell):
                 continue
 
-            content = render_entry_blocks(cell).strip()
+            content = render_entry_blocks(cell, current_doc).strip()
             if not content:
                 continue
 
@@ -855,7 +872,7 @@ def convert_image_layout_table(elem):
     out += "::::\n\n"
     return out
 
-def convert_literal_parallel_table(elem):
+def convert_literal_parallel_table(elem, current_doc):
     rows = table_rows_direct(elem)
     if not rows:
         return ""
@@ -879,8 +896,8 @@ def convert_literal_parallel_table(elem):
 
     left_cell, right_cell = row
 
-    left = render_entry_blocks(left_cell).strip()
-    right = render_entry_blocks(right_cell).strip()
+    left = render_entry_blocks(left_cell, current_doc).strip()
+    right = render_entry_blocks(right_cell, current_doc).strip()
 
     out = "::::{grid} 1 1 2 2\n"
     out += ":gutter: 2\n\n"
@@ -898,24 +915,24 @@ def convert_literal_parallel_table(elem):
     out += "::::\n\n"
     return out
 
-def convert_table(elem):
+def convert_table(elem, current_doc):
     title = elem.find("title")
-    caption = render_inline(title) if title is not None else ""
+    caption = render_inline(title, current_doc) if title is not None else ""
 
     if is_image_layout_table(elem):
-        out = convert_image_layout_table(elem)
+        out = convert_image_layout_table(elem, current_doc)
     elif is_literal_parallel_table(elem):
-        out = convert_literal_parallel_table(elem)
+        out = convert_literal_parallel_table(elem, current_doc)
     elif table_has_spans(elem):
-        out = convert_flat_table(elem)
+        out = convert_flat_table(elem, current_doc)
     else:
-        out = convert_simple_list_table(elem)
+        out = convert_simple_list_table(elem, current_doc)
 
     if caption:
         return caption + "\n\n" + out
     return out
 
-def convert_flat_table(elem):
+def convert_flat_table(elem, current_doc):
     rows = get_rows(elem)
     if not rows:
         return ""
@@ -925,93 +942,93 @@ def convert_flat_table(elem):
     out += "   :header-rows: 1\n\n"
 
     for row in rows:
-        first_paras = render_cell_paragraphs(row[0])
+        first_paras = render_cell_paragraphs(row[0], current_doc)
         out += emit_flat_table_first_cell(first_paras)
 
         for cell in row[1:]:
-            out += emit_flat_table_cell(cell, "     ")
+            out += emit_flat_table_cell(cell, current_doc, "     ")
 
     out += "```\n\n"
     return out
 
-def convert_element(elem, level=1):
+def convert_element(elem, current_doc, level=1):
     out = ""
 
     if elem.tag in ("section", "sect1", "sect2"):
         title = elem.find("title")
         if title is not None:
-            out += "#" * level + " " + render_inline(title) + "\n\n"
+            out += "#" * level + " " + render_inline(title, current_doc) + "\n\n"
 
         for child in elem:
             if child.tag == "title":
                 continue
-            out += convert_element(child, level + 1)
+            out += convert_element(child, current_doc, level + 1)
 
         return out
 
     if elem.tag == "formalpara":
         title = elem.find("title")
         if title is not None:
-            title_text = render_inline(title).strip()
+            title_text = render_inline(title, current_doc).strip()
             if title_text:
                 out += title_text + "\n\n"
 
         for child in elem:
             if child.tag == "title":
                 continue
-            out += convert_element(child, level)
+            out += convert_element(child, current_doc, level)
 
         return out
 
     if elem.tag in ("para", "simpara"):
         literallayout = elem.find("literallayout")
         if literallayout is not None:
-            return out + convert_element(literallayout, level)
+            return out + convert_element(literallayout, current_doc, level)
 
-        return out + render_inline(elem) + "\n\n"
+        return out + render_inline(elem, current_doc) + "\n\n"
 
     if elem.tag in ("table", "informaltable"):
-        return out + convert_table(elem)
+        return out + convert_table(elem, current_doc)
 
     if elem.tag == "mediaobject":
-        return out + convert_image(elem)
+        return out + convert_image(elem, current_doc)
 
     if elem.tag == "itemizedlist":
-        return out + convert_itemizedlist(elem)
+        return out + convert_itemizedlist(elem, current_doc)
 
     if elem.tag == "orderedlist":
-        return out + convert_orderedlist(elem)
+        return out + convert_orderedlist(elem, current_doc)
 
     if elem.tag == "variablelist":
-        return out + convert_variablelist(elem)
+        return out + convert_variablelist(elem, current_doc)
 
     if elem.tag == "sidebar":
-        return out + convert_sidebar(elem)
+        return out + convert_sidebar(elem, current_doc)
 
     if elem.tag == "blockquote":
-        return out + convert_blockquote(elem)
+        return out + convert_blockquote(elem, current_doc)
 
     if elem.tag == "bibliography":
-        return out + convert_bibliography(elem, level)
+        return out + convert_bibliography(elem, current_doc, level)
 
     if elem.tag == "bibliodiv":
-        return out + convert_bibliodiv(elem, level + 1)
+        return out + convert_bibliodiv(elem, current_doc, level + 1)
 
     if elem.tag == "bibliomixed":
-        return out + convert_bibliomixed(elem)
+        return out + convert_bibliomixed(elem, current_doc)
 
     if elem.tag == "bibliomisc":
-        text = render_inline(elem).strip()
+        text = render_inline(elem, current_doc).strip()
         return out + (text + "\n\n" if text else "")
 
     if elem.tag == "anchor":
         return out + convert_anchor(elem) + "\n\n"
 
     if elem.tag in ("note", "tip", "important", "warning", "caution"):
-        return out + convert_admonition(elem)
+        return out + convert_admonition(elem, current_doc)
 
     if elem.tag == "literallayout":
-        text = render_literallayout_text(elem)
+        text = render_literallayout_text(elem, current_doc)
         role = elem.attrib.get("role", "").strip()
 
         out += "```{code-block} text\n"
@@ -1023,11 +1040,11 @@ def convert_element(elem, level=1):
         return out
 
     for child in elem:
-        out += convert_element(child, level)
+        out += convert_element(child, current_doc, level)
 
     return out
 
-def convert(doc):
+def convert(doc, current_doc):
     root = parse_docbook_with_table_widths(doc)
     out = ""
 
@@ -1038,15 +1055,15 @@ def convert(doc):
             title = info.find("title")
 
     if title is not None:
-        out += "# " + render_inline(title) + "\n\n"
+        out += "# " + render_inline(title, current_doc) + "\n\n"
 
     for child in root:
         if child.tag in ("title", "info"):
             continue
-        out += convert_element(child, level=2)
+        out += convert_element(child, current_doc, level=2)
 
     return out
 
 if __name__ == "__main__":
     import sys
-    print(convert(sys.argv[1]))
+    print(convert(sys.argv[1], sys.argv[2]))
