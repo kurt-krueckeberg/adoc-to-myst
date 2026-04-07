@@ -3,6 +3,56 @@ import re
 from decimal import Decimal, InvalidOperation
 from math import gcd
 from functools import reduce
+from pathlib import PurePosixPath
+
+def normalize_docbook_href(target):
+    target = (target or "").strip()
+    if not target:
+        return target
+
+    if target.endswith(".xml"):
+        target = target[:-4] + ".md"
+    elif target.endswith(".adoc"):
+        target = target[:-5] + ".md"
+
+    return target
+
+def fallback_label_from_target(target):
+    target = (target or "").strip()
+    if not target:
+        return ""
+
+    target = target.rsplit("#", 1)[0]
+    target = target.replace("\\", "/")
+
+    if ":" in target:
+        module, page = target.split(":", 1)
+        page = normalize_docbook_href(page)
+        stem = PurePosixPath(page).stem
+
+        if stem == "index":
+            return module
+        return f"{module}:{stem}"
+
+    target = normalize_docbook_href(target)
+    return PurePosixPath(target).stem
+
+def render_xref(elem):
+    target = (
+        elem.attrib.get("linkend", "").strip()
+        or elem.attrib.get("endterm", "").strip()
+    )
+    if not target:
+        return ""
+
+    href = normalize_docbook_href(target)
+
+    label = render_inline(elem).strip()
+    if not label:
+        label = fallback_label_from_target(target)
+
+    label = escape_markdown_link_text(label)
+    return f"[{label}]({href})"
 
 def render_link(elem):
     # External link wrapped in <link><ulink ...>...</ulink></link>
@@ -20,9 +70,14 @@ def render_link(elem):
     # Internal DocBook link: <link linkend="...">label</link>
     linkend = elem.attrib.get("linkend", "").strip()
     if linkend:
-        label = render_inline(elem).strip() or linkend
+        href = normalize_docbook_href(linkend)
+
+        label = render_inline(elem).strip()
+        if not label:
+            label = fallback_label_from_target(linkend)
+
         label = escape_markdown_link_text(label)
-        return f"[{label}](#{linkend})"
+        return f"[{label}]({href})"
 
     return ""
 
