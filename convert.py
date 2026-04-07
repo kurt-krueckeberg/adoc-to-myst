@@ -877,11 +877,38 @@ def entry_is_image_only(entry):
         return False
     return all(child.tag in ("mediaobject", "figure", "informalfigure") for child in children)
 
-def entry_is_literal_only(entry):
+def entry_is_blocky(entry):
     children = entry_children(entry)
     if not children:
         return False
-    return all(child.tag == "literallayout" for child in children)
+
+    block_tags = {
+        "literallayout",
+        "para",
+        "simpara",
+        "itemizedlist",
+        "orderedlist",
+        "blockquote",
+        "sidebar",
+        "variablelist",
+        "informaltable",
+        "table",
+    }
+
+    if any(child.tag not in block_tags for child in children):
+        return False
+
+    if len(children) > 1:
+        return True
+
+    if children[0].tag == "literallayout":
+        return True
+
+    text = "".join(entry.itertext()).strip()
+    if text.count("\n") >= 3:
+        return True
+
+    return False
 
 def table_rows_direct(elem):
     rows = []
@@ -912,14 +939,15 @@ def is_image_layout_table(elem):
 
     return saw_nonempty
 
-def is_literal_parallel_table(elem):
+def is_parallel_layout_table(elem):
     if table_has_spans(elem):
         return False
 
-    header_rows = header_rows_from_table(elem)
     rows = table_rows_direct(elem)
     if not rows:
         return False
+
+    header_rows = header_rows_from_table(elem)
 
     if header_rows == 0:
         body_rows = rows
@@ -930,20 +958,36 @@ def is_literal_parallel_table(elem):
     else:
         return False
 
-    if len(body_rows) != 1:
+    if not body_rows:
         return False
 
-    row = body_rows[0]
-    if len(row) != 2:
+    if any(len(row) != 2 for row in body_rows):
         return False
 
-    return entry_is_literal_only(row[0]) and entry_is_literal_only(row[1])
+    saw_blocky = False
+    for row in body_rows:
+        for cell in row:
+            if is_empty_entry(cell):
+                continue
+            if entry_is_blocky(cell):
+                saw_blocky = True
+            else:
+                return False
+
+    return saw_blocky
 
 def render_entry_blocks(entry, current_doc, level=1):
     out = ""
+
+    if (entry.text or "").strip():
+        out += entry.text.strip() + "\n\n"
+
     for child in entry:
         if isinstance(child.tag, str):
-            out += convert_element(child, current_doc, level)
+            rendered = convert_element(child, current_doc, level)
+            if rendered:
+                out += rendered
+
     return out.strip()
 
 def render_literallayout_text(elem, current_doc):
@@ -1033,8 +1077,8 @@ def convert_table(elem, current_doc):
 
     if is_image_layout_table(elem):
         out = convert_image_layout_table(elem, current_doc)
-    elif is_literal_parallel_table(elem):
-        out = convert_literal_parallel_table(elem, current_doc)
+    elif is_parallel_layout_table(elem):
+        out = convert_parallel_layout_table(elem, current_doc)
     elif table_has_spans(elem):
         out = convert_flat_table(elem, current_doc)
     else:
