@@ -88,12 +88,29 @@ def extract_adoc_title(path):
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 s = line.strip()
+
                 if not s:
                     continue
-                if s.startswith("="):
-                    return s.lstrip("=").strip()
+
+                # Skip common AsciiDoc preamble lines before the document title
+                if s.startswith("//"):
+                    continue
+                if s.startswith(":") and s.count(":") >= 2:
+                    continue
+                if s.startswith("[") and s.endswith("]"):
+                    continue
+                if s in ("ifdef::env-github[]", "endif::[]", "ifndef::env-github[]"):
+                    continue
+
+                if s.startswith("= "):
+                    return s[2:].strip()
+
+                # If we hit real content before a title, stop.
+                break
+
     except OSError:
         return None
+
     return None
 
 def render_xref(elem, current_doc):
@@ -126,7 +143,6 @@ def render_link(elem, current_doc):
     ulink = elem.find("ulink")
     if ulink is not None:
         url = ulink.attrib.get("url", "")
-
         url = normalize_docbook_href(url, current_doc)
 
         label = "".join(ulink.itertext()).strip()
@@ -141,7 +157,15 @@ def render_link(elem, current_doc):
 
         label = render_inline(elem, current_doc).strip()
         if not label:
-            label = fallback_label_from_target(linkend)
+            src = adoc_source_from_target(linkend)
+            if src:
+                title = extract_adoc_title(src)
+                if title:
+                    label = title
+                else:
+                    label = fallback_label_from_target(linkend)
+            else:
+                label = fallback_label_from_target(linkend)
 
         label = escape_markdown_link_text(label)
         return f"[{label}]({href})"
