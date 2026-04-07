@@ -124,7 +124,15 @@ def render_xref(elem, current_doc):
     href = normalize_docbook_href(target, current_doc)
 
     label = render_inline(elem, current_doc).strip()
-    if not label:
+
+    auto_label = (
+        not label
+        or label == target
+        or label == os.path.basename(target)
+        or label.endswith(".xml")
+    )
+
+    if auto_label:
         src = adoc_source_from_target(target)
         if src:
             title = extract_adoc_title(src)
@@ -137,6 +145,7 @@ def render_xref(elem, current_doc):
 
     label = escape_markdown_link_text(label)
     return f"[{label}]({href})"
+
 
 def render_link(elem, current_doc):
     # External link wrapped in <link><ulink ...>...</ulink></link>
@@ -156,7 +165,15 @@ def render_link(elem, current_doc):
         href = normalize_docbook_href(linkend, current_doc)
 
         label = render_inline(elem, current_doc).strip()
-        if not label:
+
+        auto_label = (
+            not label
+            or label == linkend
+            or label == os.path.basename(linkend)
+            or label.endswith(".xml")
+        )
+
+        if auto_label:
             src = adoc_source_from_target(linkend)
             if src:
                 title = extract_adoc_title(src)
