@@ -13,8 +13,13 @@ REPO_ROOT="$SCRIPT_DIR"
 
 OUTPUT_OVERRIDE=""
 DOC4_DIR_OVERRIDE=""
+MODULES_DIR=""
 INPUT=""
 DEBUG="${DEBUG:-0}"
+
+usage() {
+  echo "Usage: $0 --modules-dir /path/to/modules [-o output.md] [--doc4-dir /path/to/folder] <input.adoc>"
+}
 
 # --- Parse args (order-independent) ---
 while [[ $# -gt 0 ]]; do
@@ -27,9 +32,13 @@ while [[ $# -gt 0 ]]; do
       DOC4_DIR_OVERRIDE="$2"
       shift 2
       ;;
+    --modules-dir)
+      MODULES_DIR="$2"
+      shift 2
+      ;;
     -*)
       echo "Unknown option: $1"
-      echo "Usage: $0 [-o output.md] [--doc4-dir /path/to/folder] <input.adoc>"
+      usage
       exit 1
       ;;
     *)
@@ -40,8 +49,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Input validation ---
-if [[ -z "$INPUT" ]]; then
-  echo "Usage: $0 [-o output.md] [--doc4-dir /path/to/folder] <input.adoc>"
+if [[ -z "$INPUT" || -z "$MODULES_DIR" ]]; then
+  usage
   exit 1
 fi
 
@@ -50,12 +59,13 @@ if [[ ! -f "$INPUT" ]]; then
   exit 1
 fi
 
-MODULES_DIR="${INPUT%%/modules/*}/modules"
-
 if [[ ! -d "$MODULES_DIR" ]]; then
-  echo "Error: could not determine modules directory from input: $INPUT"
+  echo "Error: modules directory not found: $MODULES_DIR"
   exit 1
 fi
+
+# Normalize modules path
+MODULES_DIR="$(cd "$MODULES_DIR" && pwd)"
 
 # --- Derive names ---
 BASENAME="$(basename "$INPUT" .adoc)"
@@ -88,7 +98,6 @@ else
   OUTPUT_MD="$(dirname "$INPUT")/${BASENAME}.md"
 fi
 
-# Ensure output directory exists if -o points elsewhere
 mkdir -p "$(dirname "$OUTPUT_MD")"
 
 # --- Configure dbcookbook location ---

@@ -26,15 +26,22 @@ def normalize_docbook_href(target, current_doc):
 
     current_doc = PurePosixPath(current_doc)
     source_root = current_doc.parent.parent
-    
+
     if ":" in target:
         module, page = target.split(":", 1)
         target_path = source_root / module / page
     else:
-        target_path = current_doc.parent / target
+        p = PurePosixPath(target)
+
+        if p.is_absolute():
+            target_path = p
+        elif len(p.parts) >= 2 and p.parts[0] != current_doc.parent.name:
+            target_path = source_root / p
+        else:
+            target_path = current_doc.parent / p
 
     rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
-    return rel.replace("\\", "/") + fragment    
+    return rel.replace("\\", "/") + fragment
 
 def fallback_label_from_target(target):
     target = (target or "").strip()
