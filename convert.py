@@ -5,6 +5,155 @@ from decimal import Decimal, InvalidOperation
 from math import gcd
 from functools import reduce
 from pathlib import PurePosixPath, Path
+import json
+
+COMPONENT_ROOTS = {}
+COMPONENTS_FILE_SUPPLIED = False
+SOURCE_ROOT = None
+
+def die(msg):
+    raise SystemExit(msg)
+
+def normalize_component_root_path(path_value):
+    p = Path(path_value).expanduser()
+    if p.name == "modules":
+        return p.resolve()
+    modules_child = p / "modules"
+    if modules_child.is_dir():
+        return modules_child.resolve()
+    return p.resolve()
+
+def parse_components_file(path_value):
+    path = Path(path_value).expanduser()
+    if not path.is_file():
+        die(f"Error: components file not found: {path_value}")
+
+    text = path.read_text(encoding="utf-8")
+
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        yaml = None
+
+    data = None
+    if yaml is not None:
+        data = yaml.safe_load(text)
+    else:
+        components = {}
+        in_components = False
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped == "components:":
+                in_components = True
+                continue
+            if in_components:
+                m = re.match(r'^([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$', stripped)
+                if m:
+                    components[m.group(1)] = m.group(2)
+                elif not raw_line.startswith((" ", "\t")):
+                    break
+        data = {"components": components}
+
+    if not isinstance(data, dict):
+        die(f"Error: invalid YAML in --components-file: {path_value}")
+
+    components = data.get("components")
+    if not isinstance(components, dict):
+        die(f"Error: --components-file must contain a top-level 'components' mapping: {path_value}")
+
+    normalized = {}
+    for name, root in components.items():
+        if not isinstance(name, str) or not isinstance(root, str):
+            die(f"Error: invalid component mapping in --components-file: {path_value}")
+        normalized[name] = normalize_component_root_path(root)
+
+    return normalized
+
+def split_antora_target(target):
+    target = (target or "").strip()
+    if not target:
+        return None
+
+    fragment = ""
+    if "#" in target:
+        target, frag = target.split("#", 1)
+        fragment = "#" + frag
+
+    normalized_target = target
+    if normalized_target.endswith(".xml"):
+        normalized_target = normalized_target[:-4] + ".adoc"
+    elif normalized_target.endswith(".md"):
+        normalized_target = normalized_target[:-3] + ".adoc"
+
+    parts = normalized_target.split(":")
+    if len(parts) >= 3 and (parts[-1].endswith(".adoc") or parts[-1].endswith(".md")):
+        component = parts[0]
+        module = parts[1]
+        page = ":".join(parts[2:])
+        return {
+            "kind": "cross_component_page",
+            "component": component,
+            "module": module,
+            "page": page,
+            "fragment": fragment,
+        }
+
+    if len(parts) == 2:
+        left, right = parts
+        if right.endswith((".adoc", ".md", ".xml")):
+            return {
+                "kind": "same_component_page",
+                "module": left,
+                "page": right,
+                "fragment": fragment,
+            }
+        return {
+            "kind": "same_component_asset",
+            "module": left,
+            "asset": right,
+            "fragment": fragment,
+        }
+
+    return {
+        "kind": "path",
+        "path": target,
+        "fragment": fragment,
+    }
+
+def myst_external_doc_role(component, module, page, label=None):
+    doc_path = PurePosixPath(module) / PurePosixPath(page).with_suffix("")
+    target = doc_path.as_posix()
+    if label:
+        return f"{{external+{component}:doc}}`{escape_markdown_link_text(label)} <{target}>`"
+    return f"{{external+{component}:doc}}`{target}`"
+
+def format_cross_component_xref_for_error(target):
+    target = (target or "").strip()
+    if target.endswith(".xml"):
+        target = target[:-4] + ".adoc"
+    elif target.endswith(".md"):
+        target = target[:-3] + ".adoc"
+    return f"xref:{target}[]"
+
+def require_component_mapping_for_empty_cross_component_xref(target):
+    parsed = split_antora_target(target)
+    if not parsed or parsed["kind"] != "cross_component_page":
+        return
+
+    xref_text = format_cross_component_xref_for_error(target)
+
+    if not COMPONENTS_FILE_SUPPLIED:
+        die(
+            f"Error: cross-component xref {xref_text} requires --components-file, but it was not supplied."
+        )
+
+    if parsed["component"] not in COMPONENT_ROOTS:
+        die(
+            f"Error: cross-component xref {xref_text} requires a mapping for component '{parsed['component']}' in --components-file, but none was found."
+        )
 
 def normalize_docbook_href(target, current_doc):
     target = (target or "").strip()
@@ -14,25 +163,32 @@ def normalize_docbook_href(target, current_doc):
     if "://" in target or target.startswith("#"):
         return target
 
-    fragment = ""
-    if "#" in target:
-        target, frag = target.split("#", 1)
-        fragment = "#" + frag
+    parsed = split_antora_target(target)
+    if not parsed:
+        return target
 
-    if target.endswith(".xml"):
-        target = target[:-4] + ".md"
-    elif target.endswith(".adoc"):
-        target = target[:-5] + ".md"
+    if parsed["kind"] == "cross_component_page":
+        return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"])
 
+    fragment = parsed.get("fragment", "")
     current_doc = PurePosixPath(current_doc)
     source_root = current_doc.parent.parent
 
-    if ":" in target:
-        module, page = target.split(":", 1)
-        target_path = source_root / module / page
+    if parsed["kind"] == "same_component_page":
+        page = parsed["page"]
+        if page.endswith(".xml"):
+            page = page[:-4] + ".md"
+        elif page.endswith(".adoc"):
+            page = page[:-5] + ".md"
+        target_path = source_root / parsed["module"] / page
     else:
-        p = PurePosixPath(target)
+        path = parsed["path"]
+        if path.endswith(".xml"):
+            path = path[:-4] + ".md"
+        elif path.endswith(".adoc"):
+            path = path[:-5] + ".md"
 
+        p = PurePosixPath(path)
         if p.is_absolute():
             target_path = p
         elif len(p.parts) >= 2 and p.parts[0] != current_doc.parent.name:
@@ -49,37 +205,59 @@ def fallback_label_from_target(target):
         return ""
 
     target = target.rsplit("#", 1)[0]
-    target = target.replace("\\", "/")
+    parsed = split_antora_target(target)
+    if not parsed:
+        return ""
 
-    if ":" in target:
-        module, page = target.split(":", 1)
-        page = normalize_docbook_href(page, "dummy.md")
+    if parsed["kind"] == "cross_component_page":
+        stem = PurePosixPath(parsed["page"]).stem
+        return f"{parsed['component']}:{parsed['module']}:{stem}"
+
+    if parsed["kind"] == "same_component_page":
+        page = parsed["page"]
+        if page.endswith(".xml"):
+            page = page[:-4] + ".md"
+        elif page.endswith(".adoc"):
+            page = page[:-5] + ".md"
         stem = PurePosixPath(page).stem
-
         if stem == "index":
-            return module
-        return f"{module}:{stem}"
+            return parsed["module"]
+        return f"{parsed['module']}:{stem}"
 
-    target = normalize_docbook_href(target, "dummy.md")
-    return PurePosixPath(target).stem
-
-SOURCE_ROOT = None
+    normalized = normalize_docbook_href(target, "dummy/current.md")
+    return PurePosixPath(normalized).stem
 
 def adoc_source_from_target(target):
     target = (target or "").strip()
-    if not target or SOURCE_ROOT is None:
+    if not target:
         return None
 
     target = target.rsplit("#", 1)[0]
+    parsed = split_antora_target(target)
+    if not parsed:
+        return None
 
-    if target.endswith(".xml"):
-        target = target[:-4] + ".adoc"
-    elif target.endswith(".md"):
-        target = target[:-3] + ".adoc"
+    if parsed["kind"] == "cross_component_page":
+        root = COMPONENT_ROOTS.get(parsed["component"])
+        if root is None:
+            return None
+        page = parsed["page"]
+        if page.endswith(".xml"):
+            page = page[:-4] + ".adoc"
+        elif page.endswith(".md"):
+            page = page[:-3] + ".adoc"
+        return root / parsed["module"] / "pages" / page
 
-    if ":" in target:
-        module, page = target.split(":", 1)
-        return SOURCE_ROOT / module / "pages" / page
+    if SOURCE_ROOT is None:
+        return None
+
+    if parsed["kind"] == "same_component_page":
+        page = parsed["page"]
+        if page.endswith(".xml"):
+            page = page[:-4] + ".adoc"
+        elif page.endswith(".md"):
+            page = page[:-3] + ".adoc"
+        return SOURCE_ROOT / parsed["module"] / "pages" / page
 
     return None
 
@@ -121,8 +299,6 @@ def render_xref(elem, current_doc):
     if not target:
         return ""
 
-    href = normalize_docbook_href(target, current_doc)
-
     label = render_inline(elem, current_doc).strip()
 
     auto_label = (
@@ -131,6 +307,23 @@ def render_xref(elem, current_doc):
         or label == os.path.basename(target)
         or label.endswith(".xml")
     )
+
+    parsed = split_antora_target(target)
+    if parsed and parsed["kind"] == "cross_component_page":
+        if auto_label:
+            require_component_mapping_for_empty_cross_component_xref(target)
+            src = adoc_source_from_target(target)
+            if src:
+                title = extract_adoc_title(src)
+                if title:
+                    label = title
+                else:
+                    label = fallback_label_from_target(target)
+            else:
+                label = fallback_label_from_target(target)
+        return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"], label or None)
+
+    href = normalize_docbook_href(target, current_doc)
 
     if auto_label:
         src = adoc_source_from_target(target)
@@ -147,12 +340,10 @@ def render_xref(elem, current_doc):
     return f"[{label}]({href})"
 
 def render_link(elem, current_doc):
-    # External link wrapped in <link><ulink ...>...</ulink></link>
     ulink = elem.find("ulink")
     if ulink is not None:
         url = ulink.attrib.get("url", "").strip()
-        href = normalize_docbook_href(url, current_doc)
-
+        parsed = split_antora_target(url)
         label = "".join(ulink.itertext()).strip()
 
         auto_label = (
@@ -162,12 +353,23 @@ def render_link(elem, current_doc):
             or label.endswith(".xml")
         )
 
-        # If this is really an internal DocBook/AsciiDoc cross-reference that
-        # got serialized as a ulink with bogus .xml text, ignore the bogus
-        # label and read the target AsciiDoc page title instead.
-        if auto_label and (
-            ":" in url or url.endswith(".xml") or url.endswith(".adoc") or url.endswith(".md")
-        ):
+        if parsed and parsed["kind"] == "cross_component_page":
+            if auto_label:
+                require_component_mapping_for_empty_cross_component_xref(url)
+                src = adoc_source_from_target(url)
+                if src:
+                    title = extract_adoc_title(src)
+                    if title:
+                        label = title
+                    else:
+                        label = fallback_label_from_target(url)
+                else:
+                    label = fallback_label_from_target(url)
+            return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"], label or None)
+
+        href = normalize_docbook_href(url, current_doc)
+
+        if auto_label and (":" in url or url.endswith(".xml") or url.endswith(".adoc") or url.endswith(".md")):
             src = adoc_source_from_target(url)
             if src:
                 title = extract_adoc_title(src)
@@ -181,11 +383,9 @@ def render_link(elem, current_doc):
         label = escape_markdown_link_text(label)
         return f"[{label or href}]({href})"
 
-    # Internal DocBook link: <link linkend="...">label</link>
     linkend = elem.attrib.get("linkend", "").strip()
     if linkend:
-        href = normalize_docbook_href(linkend, current_doc)
-
+        parsed = split_antora_target(linkend)
         label = render_inline(elem, current_doc).strip()
 
         auto_label = (
@@ -194,6 +394,22 @@ def render_link(elem, current_doc):
             or label == os.path.basename(linkend)
             or label.endswith(".xml")
         )
+
+        if parsed and parsed["kind"] == "cross_component_page":
+            if auto_label:
+                require_component_mapping_for_empty_cross_component_xref(linkend)
+                src = adoc_source_from_target(linkend)
+                if src:
+                    title = extract_adoc_title(src)
+                    if title:
+                        label = title
+                    else:
+                        label = fallback_label_from_target(linkend)
+                else:
+                    label = fallback_label_from_target(linkend)
+            return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"], label or None)
+
+        href = normalize_docbook_href(linkend, current_doc)
 
         if auto_label:
             src = adoc_source_from_target(linkend)
@@ -477,23 +693,40 @@ def convert_bibliodiv(elem, current_doc, level=1):
 
     return out
 
-def normalize_image_path(src):
+def normalize_image_path(src, current_doc):
     src = (src or "").strip()
     if not src:
         return src
 
-    # Leave absolute URLs and already-qualified paths alone.
-    if "://" in src or src.startswith("/") or "/" in src:
+    if "://" in src or src.startswith("/"):
         return src
 
-    return f"images/{src}"
+    current_doc = PurePosixPath(current_doc)
+    source_root = current_doc.parent.parent
+    parsed = split_antora_target(src)
+
+    if parsed and parsed["kind"] == "same_component_asset":
+        target_path = source_root / parsed["module"] / "images" / PurePosixPath(parsed["asset"])
+    else:
+        p = PurePosixPath(src)
+        if p.parts and p.parts[0] in (".", ".."):
+            target_path = current_doc.parent / p
+        elif p.parts and p.parts[0] == "images":
+            target_path = current_doc.parent / p
+        elif len(p.parts) >= 2 and p.parts[1] == "images":
+            target_path = source_root / p
+        else:
+            target_path = current_doc.parent / "images" / p
+
+    rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
+    return rel.replace("\\", "/")
 
 def convert_image(elem, current_doc):
     img = elem.find(".//imagedata")
     if img is None:
         return ""
 
-    src = normalize_image_path(img.attrib.get("fileref", ""))
+    src = normalize_image_path(img.attrib.get("fileref", ""), current_doc)
     if not src:
         return ""
 
@@ -1221,8 +1454,22 @@ def convert(doc, current_doc):
     return out
 
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    SOURCE_ROOT = Path(sys.argv[3])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("doc4")
+    parser.add_argument("current_doc")
+    parser.add_argument("modules_dir")
+    parser.add_argument("--components-file", default="")
+    args = parser.parse_args()
 
-    print(convert(sys.argv[1], sys.argv[2]))
+    SOURCE_ROOT = normalize_component_root_path(args.modules_dir)
+
+    components = {}
+    if args.components_file:
+        COMPONENTS_FILE_SUPPLIED = True
+        components.update(parse_components_file(args.components_file))
+
+    COMPONENT_ROOTS = components
+
+    print(convert(args.doc4, args.current_doc))
