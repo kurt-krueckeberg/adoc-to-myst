@@ -356,7 +356,7 @@ def render_link(elem, current_doc):
     if ulink is not None:
         url = ulink.attrib.get("url", "").strip()
         parsed = split_antora_target(url)
-        label = "".join(ulink.itertext()).strip()
+        label = append_tail_to_link_label(link_label_from_ulink(ulink), elem.tail)
 
         auto_label = (
             not label
@@ -447,6 +447,21 @@ def escape_markdown_link_text(text):
         return text
     return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
+def link_label_from_ulink(ulink):
+    label = "".join(ulink.itertext()).strip()
+    tail = (ulink.tail or "").strip()
+    if tail and tail != label:
+        label = (label + " " + tail).strip()
+    return label
+
+def append_tail_to_link_label(label, tail):
+    tail = (tail or "").strip()
+    if not tail or tail == label:
+        return label
+    if tail[0] in ".,;:!?)]":
+        return (label + tail).strip()
+    return (label + " " + tail).strip()
+
 def render_inline(elem, current_doc):
     out = ""
 
@@ -481,7 +496,10 @@ def render_inline(elem, current_doc):
             out += render_inline(child, current_doc)
 
         if child.tail:
-            out += child.tail
+            if child.tag == "link" and child.tail.strip():
+                pass
+            else:
+                out += child.tail
 
     return out.strip() if elem.tag in ("para", "simpara") else out
 
@@ -498,6 +516,198 @@ def render_cell_paragraphs(elem, current_doc):
         return paras
 
     text = render_inline(elem, current_doc)
+    return [text] if text else [""]
+
+def strip_doc_suffix(path):
+    p = PurePosixPath(path)
+    if p.suffix.lower() in (".md", ".rst", ".adoc", ".xml"):
+        return p.with_suffix("").as_posix()
+    return p.as_posix()
+
+def escape_rst_role_text(text):
+    if not text:
+        return text
+    return text.replace("\\", "\\\\").replace("`", "\\`")
+def rst_doc_role(target, current_doc, label=None):
+    parsed = split_antora_target(target)
+    if not parsed:
+        href = normalize_docbook_href(target, current_doc)
+        label = escape_rst_role_text(label or href)
+        return f"`{label} <{href}>`_"
+
+    if parsed["kind"] == "cross_component_page":
+        doc_target = (PurePosixPath(parsed["module"]) / PurePosixPath(parsed["page"]).with_suffix("")).as_posix()
+        role_name = f"external+{parsed['component']}:doc"
+        if label:
+            return f":{role_name}:`{escape_rst_role_text(label)} <{doc_target}>`"
+        return f":{role_name}:`{doc_target}`"
+
+    href = normalize_docbook_href(target, current_doc)
+    fragment = ""
+    if "#" in href:
+        href, frag = href.split("#", 1)
+        fragment = "#" + frag
+
+    if fragment:
+        full_target = href + fragment
+        label = escape_rst_role_text(label or full_target)
+        return f"`{label} <{full_target}>`_"
+
+    doc_target = strip_doc_suffix(href)
+    if label:
+        return f":doc:`{escape_rst_role_text(label)} <{doc_target}>`"
+    return f":doc:`{doc_target}`"
+
+def render_xref_rst(elem, current_doc):
+    target = (
+        elem.attrib.get("linkend", "").strip()
+        or elem.attrib.get("endterm", "").strip()
+    )
+    if not target:
+        return ""
+
+    label = render_inline_rst(elem, current_doc).strip()
+
+    auto_label = (
+        not label
+        or label == target
+        or label == os.path.basename(target)
+        or label.endswith(".xml")
+    )
+
+    if auto_label:
+        parsed = split_antora_target(target)
+        if parsed and parsed["kind"] == "cross_component_page":
+            require_component_mapping_for_empty_cross_component_xref(target)
+        src = adoc_source_from_target(target)
+        if src:
+            title = extract_adoc_title(src)
+            if title:
+                label = title
+            else:
+                label = fallback_label_from_target(target)
+        else:
+            label = fallback_label_from_target(target)
+
+    return rst_doc_role(target, current_doc, label or None)
+
+def render_link_rst(elem, current_doc):
+    ulink = elem.find("ulink")
+    if ulink is not None:
+        url = ulink.attrib.get("url", "").strip()
+        label = append_tail_to_link_label(link_label_from_ulink(ulink), elem.tail)
+
+        auto_label = (
+            not label
+            or label == url
+            or label == os.path.basename(url)
+            or label.endswith(".xml")
+        )
+
+        parsed = split_antora_target(url)
+        if parsed and parsed["kind"] == "cross_component_page" and auto_label:
+            require_component_mapping_for_empty_cross_component_xref(url)
+
+        if auto_label and (parsed is not None or url.endswith((".xml", ".adoc", ".md"))):
+            src = adoc_source_from_target(url)
+            if src:
+                title = extract_adoc_title(src)
+                if title:
+                    label = title
+                else:
+                    label = fallback_label_from_target(url)
+            else:
+                label = fallback_label_from_target(url)
+
+        if parsed is not None or url.endswith((".xml", ".adoc", ".md")):
+            return rst_doc_role(url, current_doc, label or None)
+
+        href = normalize_docbook_href(url, current_doc)
+        label = escape_rst_role_text(label or href)
+        return f"`{label} <{href}>`_"
+
+    linkend = elem.attrib.get("linkend", "").strip()
+    if linkend:
+        label = render_inline_rst(elem, current_doc).strip()
+
+        auto_label = (
+            not label
+            or label == linkend
+            or label == os.path.basename(linkend)
+            or label.endswith(".xml")
+        )
+
+        parsed = split_antora_target(linkend)
+        if parsed and parsed["kind"] == "cross_component_page" and auto_label:
+            require_component_mapping_for_empty_cross_component_xref(linkend)
+
+        if auto_label:
+            src = adoc_source_from_target(linkend)
+            if src:
+                title = extract_adoc_title(src)
+                if title:
+                    label = title
+                else:
+                    label = fallback_label_from_target(linkend)
+            else:
+                label = fallback_label_from_target(linkend)
+
+        return rst_doc_role(linkend, current_doc, label or None)
+
+    return ""
+
+def render_inline_rst(elem, current_doc):
+    out = ""
+
+    if elem.text:
+        out += elem.text
+
+    for child in elem:
+        if child.tag == "emphasis":
+            role = child.attrib.get("role", "")
+            inner = render_inline_rst(child, current_doc)
+            if role == "strong":
+                out += f"**{inner}**"
+            else:
+                out += f"*{inner}*"
+
+        elif child.tag == "xref":
+            out += render_xref_rst(child, current_doc)
+
+        elif child.tag == "ulink":
+            url = child.attrib.get("url", "")
+            href = normalize_docbook_href(url, current_doc)
+            label = render_inline_rst(child, current_doc) or href
+            label = escape_rst_role_text(label)
+            out += f"`{label} <{href}>`_"
+
+        elif child.tag == "link":
+            out += render_link_rst(child, current_doc)
+
+        else:
+            out += render_inline_rst(child, current_doc)
+
+        if child.tail:
+            if child.tag == "link" and child.tail.strip():
+                pass
+            else:
+                out += child.tail
+
+    return out.strip() if elem.tag in ("para", "simpara") else out
+
+def render_cell_paragraphs_rst(elem, current_doc):
+    paras = []
+
+    for child in elem:
+        if child.tag in ("simpara", "para"):
+            text = render_inline_rst(child, current_doc)
+            if text:
+                paras.append(text)
+
+    if paras:
+        return paras
+
+    text = render_inline_rst(elem, current_doc)
     return [text] if text else [""]
 
 def render_blocks(elem, current_doc, level=1):
@@ -991,19 +1201,28 @@ def emit_flat_table_cell(cell, current_doc, indent):
 
     if "morerows" in cell.attrib:
         try:
-            attrs.append(f":rspan: {int(cell.attrib['morerows'])}")
+            attrs.append(f":rspan:`{int(cell.attrib['morerows'])}`")
         except ValueError:
             pass
 
-    if "namest" in cell.attrib and "nameend" in cell.attrib:
-        attrs.append(":cspan: 1")
+    if "morecols" in cell.attrib:
+        try:
+            attrs.append(f":cspan:`{int(cell.attrib['morecols'])}`")
+        except ValueError:
+            pass
+    elif "namest" in cell.attrib and "nameend" in cell.attrib:
+        attrs.append(":cspan:`1`")
 
-    paras = render_cell_paragraphs(cell, current_doc)
+    paras = render_cell_paragraphs_rst(cell, current_doc)
     out = ""
 
     first_lines = paras[0].splitlines() or [""]
+    first_line = first_lines[0]
+    prefix = " ".join(attrs).strip()
+    if prefix:
+        first_line = (prefix + " " + first_line).rstrip()
 
-    out += f"{indent}- {first_lines[0]}\n"
+    out += f"{indent}- {first_line}\n"
     for line in first_lines[1:]:
         out += f"{indent}  {line}\n"
 
@@ -1011,9 +1230,6 @@ def emit_flat_table_cell(cell, current_doc, indent):
         out += f"{indent}  \n"
         for line in para.splitlines():
             out += f"{indent}  {line}\n"
-
-    for attr in attrs:
-        out += f"{indent}  {attr}\n"
 
     return out
 
