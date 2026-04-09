@@ -760,17 +760,20 @@ def convert_sidebar(elem, current_doc):
 
         body_children.append(child)
 
-    out = f"::::{{sidebar}} {title}\n"
+    dropdown_title = title or "Sidebar"
+
+    out = f"```{{dropdown}} {dropdown_title}\n"
+    out += ":open:\n\n"
+
     if subtitle:
-        out += f":subtitle: {subtitle}\n"
-    out += "\n"
+        out += f"**{subtitle}**\n\n"
 
     for child in body_children:
         rendered = convert_element(child, current_doc)
         if rendered:
             out += rendered
 
-    out += "::::\n\n"
+    out += "```\n\n"
     return out
 
 def convert_blockquote(elem, current_doc):
