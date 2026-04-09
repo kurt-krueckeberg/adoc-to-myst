@@ -88,8 +88,12 @@ def split_antora_target(target):
     elif normalized_target.endswith(".md"):
         normalized_target = normalized_target[:-3] + ".adoc"
 
+    def looks_like_page_ref(value):
+        suffix = PurePosixPath(value).suffix.lower()
+        return suffix in ("", ".adoc", ".md", ".xml")
+
     parts = normalized_target.split(":")
-    if len(parts) >= 3 and (parts[-1].endswith(".adoc") or parts[-1].endswith(".md")):
+    if len(parts) >= 3 and looks_like_page_ref(parts[-1]):
         component = parts[0]
         module = parts[1]
         page = ":".join(parts[2:])
@@ -103,7 +107,7 @@ def split_antora_target(target):
 
     if len(parts) == 2:
         left, right = parts
-        if right.endswith((".adoc", ".md", ".xml")):
+        if looks_like_page_ref(right):
             return {
                 "kind": "same_component_page",
                 "module": left,
@@ -180,6 +184,8 @@ def normalize_docbook_href(target, current_doc):
             page = page[:-4] + ".md"
         elif page.endswith(".adoc"):
             page = page[:-5] + ".md"
+        elif PurePosixPath(page).suffix == "":
+            page = page + ".md"
         target_path = source_root / parsed["module"] / page
     else:
         path = parsed["path"]
@@ -219,6 +225,8 @@ def fallback_label_from_target(target):
             page = page[:-4] + ".md"
         elif page.endswith(".adoc"):
             page = page[:-5] + ".md"
+        elif PurePosixPath(page).suffix == "":
+            page = page + ".md"
         stem = PurePosixPath(page).stem
         if stem == "index":
             return parsed["module"]
@@ -246,6 +254,8 @@ def adoc_source_from_target(target):
             page = page[:-4] + ".adoc"
         elif page.endswith(".md"):
             page = page[:-3] + ".adoc"
+        elif PurePosixPath(page).suffix == "":
+            page = page + ".adoc"
         return root / parsed["module"] / "pages" / page
 
     if SOURCE_ROOT is None:
@@ -257,6 +267,8 @@ def adoc_source_from_target(target):
             page = page[:-4] + ".adoc"
         elif page.endswith(".md"):
             page = page[:-3] + ".adoc"
+        elif PurePosixPath(page).suffix == "":
+            page = page + ".adoc"
         return SOURCE_ROOT / parsed["module"] / "pages" / page
 
     return None
