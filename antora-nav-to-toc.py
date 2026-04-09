@@ -5,6 +5,31 @@ import yaml
 from pathlib import Path
 import re
 
+import sys
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert Antora navigation (antora.yml + nav.adoc) to Sphinx _toc.yml"
+    )
+    parser.add_argument("--antora", required=True, help="Path to antora.yml")
+    parser.add_argument("--modules-dir", required=True, help="Path to Antora modules directory")
+    parser.add_argument("-o", "--output", required=True, help="Output _toc.yml file")
+
+    if len(sys.argv) == 1:
+        parser.print_usage()
+        sys.exit(1)
+
+    args = parser.parse_args()
+
+    antora = load_antora_yaml(args.antora)
+    modules_dir = Path(args.modules_dir)
+
+    toc = build_toc(antora, modules_dir)
+
+    with open(args.output, "w", encoding="utf-8") as f:
+        yaml.dump(toc, f, sort_keys=False)
+
+    print(f"✔ Wrote {args.output}")
 
 def load_antora_yaml(path):
     with open(path, "r", encoding="utf-8") as f:
