@@ -1138,15 +1138,21 @@ def entry_is_blocky(entry):
         "variablelist",
         "informaltable",
         "table",
+        "mediaobject",
+        "figure",
+        "informalfigure",
     }
 
     if any(child.tag not in block_tags for child in children):
         return False
 
+    # Multiple block-level children in one cell definitely means
+    # this is layout/content, not a simple list-table cell.
     if len(children) > 1:
         return True
 
-    if children[0].tag == "literallayout":
+    # A single media/figure/literal block should also count as blocky.
+    if children[0].tag in ("literallayout", "mediaobject", "figure", "informalfigure"):
         return True
 
     text = "".join(entry.itertext()).strip()
