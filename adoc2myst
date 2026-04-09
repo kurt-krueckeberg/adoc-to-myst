@@ -1,5 +1,43 @@
 #!/usr/bin/env bash
 
+# adoc2myst: convert an Antora/AsciiDoc page to MyST Markdown via
+# Asciidoctor DocBook 5 -> DocBook 4 -> convert.py.
+#
+# Usage:
+#   adoc2myst --modules-dir /path/to/modules \
+#             [--components-file /path/to/components.yml] \
+#             [--doc4-dir /path/to/folder] \
+#             [-o output.md] \
+#             <input.adoc>
+#
+# Arguments:
+#   <input.adoc>
+#       Source AsciiDoc page to convert.
+#
+#   --modules-dir /path/to/modules
+#       Required. Path to the current Antora component's modules directory,
+#       e.g. ~/antora-nla/modules. Used to infer the current page's logical
+#       Antora path so cross-module xrefs and image paths can be rewritten
+#       correctly.
+#
+#   --components-file /path/to/components.yml
+#       Optional. YAML file mapping other Antora component names to their
+#       modules directories. Needed for cross-component xrefs with empty [] so
+#       the converter can read the target page title.
+#
+#       Example:
+#         components:
+#           genealogy: /home/kurt/antora-genealogy/modules
+#           immanuel: /home/kurt/antora-immanuel/modules
+#
+#   --doc4-dir /path/to/folder
+#       Optional. Directory in which to keep intermediate doc5.xml,
+#       doc5-nons.xml, and doc4.xml files for inspection/debugging.
+#
+#   -o output.md
+#       Optional. Output path for the generated MyST Markdown file.
+#       If omitted, the output file is written next to the input file.
+
 set -euo pipefail
 
 SOURCE="${BASH_SOURCE[0]}"
