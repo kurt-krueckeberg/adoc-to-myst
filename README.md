@@ -57,5 +57,6 @@ done
 > [!NOTE]
 > The `--components-file` parameter specifies a YAML file that maps other
 > Antora components to their respective folders. It is only necessary if
-> your project has `xref:`'s that > reference other components, like
+> your project has `xref:`'s that reference other components, like for
+> example:
 > `xref:genealogy:petzen:PET-M-1822a.adoc[]`. 
