@@ -35,3 +35,28 @@ Next ,create `.gitignore` in `~/adoc-2-myst` and added:
 sudo ln -s ~/adoc-2-myst/adco2myst /usr/local/bin/adoc2myst
 
 sudo chmod +x /usr/local/bin/adoc2myst
+
+## Run adoc2myst
+
+This example demonstations the CLI command to convert the AsciiDoc files in Antora project in
+`~/antora-nla` to MyST markdown files `sphinx-nla/source`:
+
+```bash
+find ~/antora-nla/modules -type f -path '*/pages/*.adoc' -print0 |                                              ✘ INT
+while IFS= read -r -d '' src; do
+    rel="${src#"$HOME/antora-nla/modules/"}"
+    module="${rel%%/*}"
+    rest="${rel#*/pages/}"
+    out="$HOME/sphinx-nla/source/$module/${rest%.adoc}.md"
+    mkdir -p "$(dirname "$out")"
+    printf 'Converting: %s -> %s\n' "$src" "$out"
+    adoc2myst "$src" --modules-dir ~/antora-nla/modules  --components-file ~/adoc-2-myst/components-example.yml  -o "$out"
+done
+```
+
+> [!NOTE]
+> THe --components-file specifies a YAML that map other Antora compoents to the
+> folders. It is only necessary if your project has `xref:`'s that
+> reference these other components, like
+> `xref:genealogy:petzen:PET-M-1822a.adoc[]`. 
+> even when skimming.
