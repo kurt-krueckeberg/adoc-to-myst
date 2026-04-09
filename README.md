@@ -42,7 +42,7 @@ This example demonstations the CLI command to convert the AsciiDoc files in Anto
 `~/antora-nla` to MyST markdown files `sphinx-nla/source`:
 
 ```bash
-find ~/antora-nla/modules -type f -path '*/pages/*.adoc' -print0 |
+find ~/antora-nla/modules -type f -path '*/pages/*.adoc' -print0 |                                                                ✘ INT
 while IFS= read -r -d '' src; do
     rel="${src#"$HOME/antora-nla/modules/"}"
     module="${rel%%/*}"
@@ -50,7 +50,7 @@ while IFS= read -r -d '' src; do
     out="$HOME/sphinx-nla/source/$module/${rest%.adoc}.md"
     mkdir -p "$(dirname "$out")"
     printf 'Converting: %s -> %s\n' "$src" "$out"
-    adoc2myst "$src" --modules-dir ~/antora-nla/modules  --components-file ~/adoc-2-myst/components-example.yml  -o "$out"
+    adoc2myst "$src" --modules-dir ~/antora-nla/modules  --components-file ~/adoc-to-myst/components-example.yml  -o "$out" 
 done
 ```
 
