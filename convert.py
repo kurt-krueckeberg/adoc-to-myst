@@ -235,7 +235,37 @@ def fallback_label_from_target(target):
     normalized = normalize_docbook_href(target, "dummy/current.md")
     return PurePosixPath(normalized).stem
 
-def adoc_source_from_target(target):
+def current_adoc_source_from_current_doc(current_doc):
+    if SOURCE_ROOT is None or not current_doc:
+        return None
+
+    current_doc = PurePosixPath(current_doc)
+    page = current_doc.name
+    if page.endswith(".xml"):
+        page = page[:-4] + ".adoc"
+    elif page.endswith(".md"):
+        page = page[:-3] + ".adoc"
+    elif page.endswith(".rst"):
+        page = page[:-4] + ".adoc"
+    elif PurePosixPath(page).suffix == "":
+        page = page + ".adoc"
+
+    return SOURCE_ROOT / current_doc.parent.name / "pages" / page
+
+
+def normalize_page_ref_to_adoc(page):
+    if page.endswith(".xml"):
+        return page[:-4] + ".adoc"
+    if page.endswith(".md"):
+        return page[:-3] + ".adoc"
+    if page.endswith(".rst"):
+        return page[:-4] + ".adoc"
+    if PurePosixPath(page).suffix == "":
+        return page + ".adoc"
+    return page
+
+
+def adoc_source_from_target(target, current_doc=None):
     target = (target or "").strip()
     if not target:
         return None
@@ -249,27 +279,22 @@ def adoc_source_from_target(target):
         root = COMPONENT_ROOTS.get(parsed["component"])
         if root is None:
             return None
-        page = parsed["page"]
-        if page.endswith(".xml"):
-            page = page[:-4] + ".adoc"
-        elif page.endswith(".md"):
-            page = page[:-3] + ".adoc"
-        elif PurePosixPath(page).suffix == "":
-            page = page + ".adoc"
+        page = normalize_page_ref_to_adoc(parsed["page"])
         return root / parsed["module"] / "pages" / page
 
     if SOURCE_ROOT is None:
         return None
 
     if parsed["kind"] == "same_component_page":
-        page = parsed["page"]
-        if page.endswith(".xml"):
-            page = page[:-4] + ".adoc"
-        elif page.endswith(".md"):
-            page = page[:-3] + ".adoc"
-        elif PurePosixPath(page).suffix == "":
-            page = page + ".adoc"
+        page = normalize_page_ref_to_adoc(parsed["page"])
         return SOURCE_ROOT / parsed["module"] / "pages" / page
+
+    if parsed["kind"] == "path":
+        page = normalize_page_ref_to_adoc(parsed["path"])
+        current_src = current_adoc_source_from_current_doc(current_doc)
+        if current_src is None:
+            return None
+        return (current_src.parent / PurePosixPath(page)).resolve()
 
     return None
 
@@ -324,7 +349,7 @@ def render_xref(elem, current_doc):
     if parsed and parsed["kind"] == "cross_component_page":
         if auto_label:
             require_component_mapping_for_empty_cross_component_xref(target)
-            src = adoc_source_from_target(target)
+            src = adoc_source_from_target(target, current_doc)
             if src:
                 title = extract_adoc_title(src)
                 if title:
@@ -338,7 +363,7 @@ def render_xref(elem, current_doc):
     href = normalize_docbook_href(target, current_doc)
 
     if auto_label:
-        src = adoc_source_from_target(target)
+        src = adoc_source_from_target(target, current_doc)
         if src:
             title = extract_adoc_title(src)
             if title:
@@ -368,7 +393,7 @@ def render_link(elem, current_doc):
         if parsed and parsed["kind"] == "cross_component_page":
             if auto_label:
                 require_component_mapping_for_empty_cross_component_xref(url)
-                src = adoc_source_from_target(url)
+                src = adoc_source_from_target(url, current_doc)
                 if src:
                     title = extract_adoc_title(src)
                     if title:
@@ -382,7 +407,7 @@ def render_link(elem, current_doc):
         href = normalize_docbook_href(url, current_doc)
 
         if auto_label and (":" in url or url.endswith(".xml") or url.endswith(".adoc") or url.endswith(".md")):
-            src = adoc_source_from_target(url)
+            src = adoc_source_from_target(url, current_doc)
             if src:
                 title = extract_adoc_title(src)
                 if title:
@@ -410,7 +435,7 @@ def render_link(elem, current_doc):
         if parsed and parsed["kind"] == "cross_component_page":
             if auto_label:
                 require_component_mapping_for_empty_cross_component_xref(linkend)
-                src = adoc_source_from_target(linkend)
+                src = adoc_source_from_target(linkend, current_doc)
                 if src:
                     title = extract_adoc_title(src)
                     if title:
@@ -424,7 +449,7 @@ def render_link(elem, current_doc):
         href = normalize_docbook_href(linkend, current_doc)
 
         if auto_label:
-            src = adoc_source_from_target(linkend)
+            src = adoc_source_from_target(linkend, current_doc)
             if src:
                 title = extract_adoc_title(src)
                 if title:
@@ -579,7 +604,7 @@ def render_xref_rst(elem, current_doc):
         parsed = split_antora_target(target)
         if parsed and parsed["kind"] == "cross_component_page":
             require_component_mapping_for_empty_cross_component_xref(target)
-        src = adoc_source_from_target(target)
+        src = adoc_source_from_target(target, current_doc)
         if src:
             title = extract_adoc_title(src)
             if title:
@@ -609,7 +634,7 @@ def render_link_rst(elem, current_doc):
             require_component_mapping_for_empty_cross_component_xref(url)
 
         if auto_label and (parsed is not None or url.endswith((".xml", ".adoc", ".md"))):
-            src = adoc_source_from_target(url)
+            src = adoc_source_from_target(url, current_doc)
             if src:
                 title = extract_adoc_title(src)
                 if title:
@@ -642,7 +667,7 @@ def render_link_rst(elem, current_doc):
             require_component_mapping_for_empty_cross_component_xref(linkend)
 
         if auto_label:
-            src = adoc_source_from_target(linkend)
+            src = adoc_source_from_target(linkend, current_doc)
             if src:
                 title = extract_adoc_title(src)
                 if title:
