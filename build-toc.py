@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 
 ANTORA_YML = Path.home() / "antora-nla" / "antora.yml"
-SPHINX_TOC = Path.home() / "sphinx-nla" / "source" / "_toc.yml"
+# Set to None to write to stdout; set to a Path(...) later if desired
+OUTPUT_PATH = None
 
 NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[\]\s*$')
 NAV_REF_RE = re.compile(r'^(?:(?P<module>[^:]+):)?(?P<doc>.+?)\.adoc$')
@@ -30,11 +32,9 @@ def read_antora_nav_list(antora_yml: Path) -> list[str]:
         if not stripped:
             continue
 
-        # Ignore comment lines inside the nav block
         if stripped.startswith("#"):
             continue
 
-        # A new top-level key ends the nav block
         if re.match(r'^\S.*:\s*$', line):
             break
 
@@ -132,11 +132,16 @@ def main() -> None:
         "",
     ]
 
-    SPHINX_TOC.parent.mkdir(parents=True, exist_ok=True)
-    SPHINX_TOC.write_text("\n".join(lines), encoding="utf-8")
+    output_text = "\n".join(lines)
 
-    print(f"Wrote {SPHINX_TOC}")
-    print(f"Read {len(nav_list)} nav files")
+    if OUTPUT_PATH is None:
+        print(output_text, end="")
+    else:
+        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT_PATH.write_text(output_text, encoding="utf-8")
+        print(f"Wrote {OUTPUT_PATH}", file=sys.stderr)
+
+    print(f"Read {len(nav_list)} nav files", file=sys.stderr)
 
 
 if __name__ == "__main__":
