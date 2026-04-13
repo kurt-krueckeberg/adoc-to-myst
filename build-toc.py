@@ -11,7 +11,7 @@ from pathlib import Path
 # Set to None to write to stdout; set to a Path(...) later if desired
 OUTPUT_PATH = None
 
-NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[\]\s*$')
+NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[[^\]]*\]\s*$')
 NAV_REF_RE = re.compile(r'^(?:(?P<module>[^:]+):)?(?P<doc>.+?)\.adoc$')
 
 
@@ -88,7 +88,17 @@ def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
             continue
 
         m = NAV_LINE_RE.match(line)
+        
+        level_match = re.match(r'^(\*+)\s+', line)
+        if not level_match:
+            continue
+        
+        level = len(level_match.group(1))
+        
+        # If it's NOT an xref, it's a structural node → reset stack appropriately
         if not m:
+            while stack and stack[-1][0] >= level:
+                stack.pop()
             continue
 
         level = len(m.group(1))
