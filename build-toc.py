@@ -139,6 +139,11 @@ def main() -> None:
         entries = parse_nav_file(nav_path, current_module)
         all_entries.extend(entries)
 
+    # ROOT/index is already declared as the root document and must not also
+    # appear in top-level entries, or sphinx-external-toc will error with
+    # "document file used multiple times: 'ROOT/index'".
+    all_entries = [entry for entry in all_entries if entry.get("file") != "ROOT/index"]
+
     lines = [
         "root: ROOT/index",
         "entries:",
