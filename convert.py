@@ -188,7 +188,10 @@ def normalize_docbook_href(target, current_doc):
             page = page + ".md"
         target_path = source_root / parsed["module"] / page
     else:
-        path = parsed["path"]
+        path = parsed.get("path")
+        if not path:
+            return fragment or target
+
         if path.endswith(".xml"):
             path = path[:-4] + ".md"
         elif path.endswith(".adoc"):
