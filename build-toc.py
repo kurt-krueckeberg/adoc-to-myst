@@ -11,65 +11,74 @@ from pathlib import Path
 # Set to None to write to stdout; set to a Path(...) later if desired
 OUTPUT_PATH = None
 
-NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[[^\]]*\]\s*$')
-NAV_REF_RE = re.compile(
-    r'^(?:(?P<module>[^:]+):)?(?P<doc>.+?)\.adoc(?:#(?P<fragment>.*))?$'
-)
+# Matches:
+# * xref:page.adoc[]
+# ** xref:module:page.adoc[Title]
+# * xref:component:module:page.adoc#anchor[Title]
+NAV_XREF_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[[^\]]*\]\s*$')
+
+# Matches a plain list item caption like:
+# ** Carl Friedrich Bleeke's (1794) Children
+NAV_TEXT_RE = re.compile(r'^(\*+)\s+(.+?)\s*$')
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build a Sphinx _toc.yml-style listing from an Antora antora.yml file."
+        description="Build a Sphinx _toc.yml-style listing from a single Antora nav.adoc file."
     )
     parser.add_argument(
-        "antora_yml",
+        "nav_adoc",
         type=Path,
-        help="Path to antora.yml",
+        help="Path to a single Antora nav.adoc file",
+    )
+    parser.add_argument(
+        "--module-name",
+        default=None,
+        help="Module name to use for xrefs without an explicit module prefix. "
+             "Defaults to the parent directory name of nav.adoc.",
+    )
+    parser.add_argument(
+        "--root",
+        default="ROOT/index",
+        help="Root document for the generated _toc.yml (default: ROOT/index)",
     )
     return parser.parse_args()
 
 
-def read_antora_nav_list(antora_yml: Path) -> list[str]:
-    nav_files: list[str] = []
-    in_nav = False
-
-    for raw in antora_yml.read_text(encoding="utf-8").splitlines():
-        line = raw.rstrip()
-
-        if not in_nav:
-            if re.match(r'^\s*nav:\s*$', line):
-                in_nav = True
-            continue
-
-        stripped = line.strip()
-
-        if not stripped:
-            continue
-
-        if stripped.startswith("#"):
-            continue
-
-        if re.match(r'^\S.*:\s*$', line):
-            break
-
-        m = re.match(r'^\s*-\s+(.+?)\s*$', line)
-        if m:
-            value = m.group(1).strip()
-            if not value.startswith("#"):
-                nav_files.append(value)
-
-    return nav_files
-
-
 def parse_xref_target(target: str, current_module: str) -> str:
+    """
+    Convert an Antora xref target into a Sphinx docname-like path.
+
+    Supported forms:
+      page.adoc
+      module:page.adoc
+      component:module:page.adoc
+
+    Any #fragment is ignored for TOC purposes.
+    """
     target = target.strip()
-    m = NAV_REF_RE.match(target)
-    if not m:
+
+    if "#" in target:
+        target, _fragment = target.split("#", 1)
+
+    if not target.endswith(".adoc"):
         raise ValueError(f"Unsupported xref target: {target}")
 
-    explicit_module = m.group("module")
-    doc = m.group("doc")
-    module = explicit_module if explicit_module else current_module
+    target = target[:-5]  # strip .adoc
+    parts = target.split(":")
+
+    if len(parts) == 1:
+        module = current_module
+        doc = parts[0]
+    elif len(parts) == 2:
+        module = parts[0]
+        doc = parts[1]
+    elif len(parts) == 3:
+        _component = parts[0]
+        module = parts[1]
+        doc = parts[2]
+    else:
+        raise ValueError(f"Unsupported xref target: {target}")
 
     return f"{module}/{doc}"
 
@@ -86,29 +95,26 @@ def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
             continue
         if stripped.startswith("//"):
             continue
-        if stripped.startswith("."):
+
+        xref_match = NAV_XREF_RE.match(line)
+        text_match = NAV_TEXT_RE.match(line)
+
+        if not text_match:
             continue
 
-        m = NAV_LINE_RE.match(line)
-
-        level_match = re.match(r'^(\*+)\s+', line)
-        if not level_match:
-            continue
-
-        level = len(level_match.group(1))
-
-        # If it's NOT an xref, it's a structural node → reset stack appropriately
-        if not m:
-            while stack and stack[-1][0] >= level:
-                stack.pop()
-            continue
-
-        target = m.group(2)
-
-        node = {"file": parse_xref_target(target, current_module)}
+        level = len(text_match.group(1))
 
         while stack and stack[-1][0] >= level:
             stack.pop()
+
+        if xref_match:
+            target = xref_match.group(2)
+            node = {"file": parse_xref_target(target, current_module)}
+        else:
+            title = text_match.group(2).strip()
+            if not title or title.startswith("xref:"):
+                continue
+            node = {"caption": title, "entries": []}
 
         if not stack:
             roots.append(node)
@@ -125,7 +131,13 @@ def yaml_lines_for_entries(entries: list[dict], indent: int = 0) -> list[str]:
     pad = " " * indent
 
     for entry in entries:
-        lines.append(f"{pad}- file: {entry['file']}")
+        if "file" in entry:
+            lines.append(f"{pad}- file: {entry['file']}")
+        elif "caption" in entry:
+            lines.append(f"{pad}- caption: {entry['caption']}")
+        else:
+            continue
+
         children = entry.get("entries", [])
         if children:
             lines.append(f"{pad}  entries:")
@@ -136,29 +148,20 @@ def yaml_lines_for_entries(entries: list[dict], indent: int = 0) -> list[str]:
 
 def main() -> None:
     args = parse_args()
-    antora_yml = args.antora_yml.expanduser().resolve()
-    nav_list = read_antora_nav_list(antora_yml)
+    nav_adoc = args.nav_adoc.expanduser().resolve()
+    if not nav_adoc.exists():
+        raise FileNotFoundError(f"Nav file not found: {nav_adoc}")
 
-    all_entries: list[dict] = []
+    current_module = args.module_name or nav_adoc.parent.name
+    entries = parse_nav_file(nav_adoc, current_module)
 
-    for rel_nav in nav_list:
-        nav_path = (antora_yml.parent / rel_nav).resolve()
-        if not nav_path.exists():
-            raise FileNotFoundError(f"Nav file not found: {nav_path}")
-
-        current_module = nav_path.parent.name
-        entries = parse_nav_file(nav_path, current_module)
-        all_entries.extend(entries)
-
-    # ROOT/index is already declared as the root document and must not also
-    # appear in top-level entries, or sphinx-external-toc will error with
-    # "document file used multiple times: 'ROOT/index'".
-    all_entries = [entry for entry in all_entries if entry.get("file") != "ROOT/index"]
+    # Remove any accidental duplicate of the declared root doc from top-level entries.
+    entries = [entry for entry in entries if entry.get("file") != args.root]
 
     lines = [
-        "root: ROOT/index",
+        f"root: {args.root}",
         "entries:",
-        *yaml_lines_for_entries(all_entries, indent=2),
+        *yaml_lines_for_entries(entries, indent=2),
         "",
     ]
 
@@ -170,8 +173,6 @@ def main() -> None:
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(output_text, encoding="utf-8")
         print(f"Wrote {OUTPUT_PATH}", file=sys.stderr)
-
-    print(f"Read {len(nav_list)} nav files", file=sys.stderr)
 
 
 if __name__ == "__main__":
