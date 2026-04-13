@@ -1,178 +1,157 @@
 #!/usr/bin/env python3
-
 from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 
-
-# Set to None to write to stdout; set to a Path(...) later if desired
-OUTPUT_PATH = None
-
-# Matches:
-# * xref:page.adoc[]
-# ** xref:module:page.adoc[Title]
-# * xref:component:module:page.adoc#anchor[Title]
-NAV_XREF_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[[^\]]*\]\s*$')
-
-# Matches a plain list item caption like:
-# ** Carl Friedrich Bleeke's (1794) Children
+NAV_XREF_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[([^\]]*)\]\s*$')
 NAV_TEXT_RE = re.compile(r'^(\*+)\s+(.+?)\s*$')
+TITLE_RE = re.compile(r'^\.([^\s].*)$')
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build a Sphinx _toc.yml-style listing from a single Antora nav.adoc file."
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Convert Antora nav.adoc to sphinx-external-toc _toc.yml"
     )
-    parser.add_argument(
-        "nav_adoc",
-        type=Path,
-        help="Path to a single Antora nav.adoc file",
-    )
-    parser.add_argument(
-        "--module-name",
-        default=None,
-        help="Module name to use for xrefs without an explicit module prefix. "
-             "Defaults to the parent directory name of nav.adoc.",
-    )
-    parser.add_argument(
-        "--root",
-        default="ROOT/index",
-        help="Root document for the generated _toc.yml (default: ROOT/index)",
-    )
-    return parser.parse_args()
+    p.add_argument("nav_adoc", type=Path, help="Path to nav.adoc")
+    p.add_argument("--module-name", default=None, help="Default Antora module name")
+    p.add_argument("--root", default="ROOT/index", help="Root document for _toc.yml")
+    return p.parse_args()
 
 
 def parse_xref_target(target: str, current_module: str) -> str:
-    """
-    Convert an Antora xref target into a Sphinx docname-like path.
-
-    Supported forms:
-      page.adoc
-      module:page.adoc
-      component:module:page.adoc
-
-    Any #fragment is ignored for TOC purposes.
-    """
-    target = target.strip()
-
     if "#" in target:
-        target, _fragment = target.split("#", 1)
-
+        target, _ = target.split("#", 1)
+    target = target.strip()
     if not target.endswith(".adoc"):
         raise ValueError(f"Unsupported xref target: {target}")
-
-    target = target[:-5]  # strip .adoc
+    target = target[:-5]
     parts = target.split(":")
-
     if len(parts) == 1:
         module = current_module
         doc = parts[0]
     elif len(parts) == 2:
-        module = parts[0]
-        doc = parts[1]
+        module, doc = parts
     elif len(parts) == 3:
-        _component = parts[0]
-        module = parts[1]
-        doc = parts[2]
+        _, module, doc = parts
     else:
         raise ValueError(f"Unsupported xref target: {target}")
-
     return f"{module}/{doc}"
 
 
-def parse_nav_file(nav_file: Path, current_module: str) -> list[dict]:
-    roots: list[dict] = []
-    stack: list[tuple[int, dict]] = []
+def yaml_quote(text: str) -> str:
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
-    for raw in nav_file.read_text(encoding="utf-8").splitlines():
-        line = raw.rstrip()
+
+def parse_nav(nav_file: Path, module: str):
+    stack: list[tuple[int, dict]] = []
+    roots: list[dict] = []
+    pending_title: str | None = None
+
+    for raw_line in nav_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.rstrip()
         stripped = line.strip()
 
-        if not stripped:
-            continue
-        if stripped.startswith("//"):
+        if not stripped or stripped.startswith("//"):
             continue
 
-        xref_match = NAV_XREF_RE.match(line)
-        text_match = NAV_TEXT_RE.match(line)
-
-        if not text_match:
+        m_title = TITLE_RE.match(stripped)
+        if m_title:
+            pending_title = m_title.group(1).strip()
             continue
 
-        level = len(text_match.group(1))
+        m_text = NAV_TEXT_RE.match(line)
+        if not m_text:
+            continue
+
+        level = len(m_text.group(1))
+        body = m_text.group(2).strip()
+
+        if pending_title:
+            title_level = max(level - 1, 0)
+            while stack and stack[-1][0] >= title_level:
+                stack.pop()
+            title_node = {"type": "caption", "caption": pending_title, "children": []}
+            if not stack:
+                roots.append(title_node)
+            else:
+                stack[-1][1]["children"].append(title_node)
+            stack.append((title_level, title_node))
+            pending_title = None
 
         while stack and stack[-1][0] >= level:
             stack.pop()
 
-        if xref_match:
-            target = xref_match.group(2)
-            node = {"file": parse_xref_target(target, current_module)}
+        m_xref = NAV_XREF_RE.match(line)
+        if m_xref:
+            node = {
+                "type": "file",
+                "file": parse_xref_target(m_xref.group(2), module),
+                "children": [],
+            }
         else:
-            title = text_match.group(2).strip()
-            if not title or title.startswith("xref:"):
-                continue
-            node = {"caption": title, "entries": []}
+            node = {
+                "type": "caption",
+                "caption": body,
+                "children": [],
+            }
 
         if not stack:
             roots.append(node)
         else:
-            stack[-1][1].setdefault("entries", []).append(node)
+            stack[-1][1]["children"].append(node)
 
         stack.append((level, node))
 
     return roots
 
 
-def yaml_lines_for_entries(entries: list[dict], indent: int = 0) -> list[str]:
+def emit_caption_block(node: dict, indent: int) -> list[str]:
     lines: list[str] = []
     pad = " " * indent
-
-    for entry in entries:
-        if "file" in entry:
-            lines.append(f"{pad}- file: {entry['file']}")
-        elif "caption" in entry:
-            lines.append(f"{pad}- caption: {entry['caption']}")
-        else:
-            continue
-
-        children = entry.get("entries", [])
-        if children:
-            lines.append(f"{pad}  entries:")
-            lines.extend(yaml_lines_for_entries(children, indent + 4))
-
+    lines.append(f"{pad}- caption: {yaml_quote(node['caption'])}")
+    emit_children_into(lines, node.get("children", []), indent + 2)
     return lines
 
 
-def main() -> None:
+def emit_file_block(node: dict, indent: int) -> list[str]:
+    lines: list[str] = []
+    pad = " " * indent
+    lines.append(f"{pad}- file: {node['file']}")
+    emit_children_into(lines, node.get("children", []), indent + 2)
+    return lines
+
+
+def emit_children_into(lines: list[str], children: list[dict], indent: int) -> None:
+    file_children = [c for c in children if c["type"] == "file"]
+    caption_children = [c for c in children if c["type"] == "caption"]
+
+    if file_children:
+        pad = " " * indent
+        lines.append(f"{pad}entries:")
+        for child in file_children:
+            lines.extend(emit_file_block(child, indent + 2))
+
+    if caption_children:
+        pad = " " * indent
+        lines.append(f"{pad}subtrees:")
+        for child in caption_children:
+            lines.extend(emit_caption_block(child, indent + 2))
+
+
+def emit_toc(tree: list[dict], root: str) -> str:
+    lines = [f"root: {root}"]
+    emit_children_into(lines, tree, 0)
+    return "\n".join(lines) + "\n"
+
+
+def main():
     args = parse_args()
-    nav_adoc = args.nav_adoc.expanduser().resolve()
-    if not nav_adoc.exists():
-        raise FileNotFoundError(f"Nav file not found: {nav_adoc}")
-
-    current_module = args.module_name or nav_adoc.parent.name
-    entries = parse_nav_file(nav_adoc, current_module)
-
-    # Remove any accidental duplicate of the declared root doc from top-level entries.
-    entries = [entry for entry in entries if entry.get("file") != args.root]
-
-    lines = [
-        f"root: {args.root}",
-        "entries:",
-        *yaml_lines_for_entries(entries, indent=2),
-        "",
-    ]
-
-    output_text = "\n".join(lines)
-
-    if OUTPUT_PATH is None:
-        print(output_text, end="")
-    else:
-        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        OUTPUT_PATH.write_text(output_text, encoding="utf-8")
-        print(f"Wrote {OUTPUT_PATH}", file=sys.stderr)
+    nav = args.nav_adoc.resolve()
+    module = args.module_name or nav.parent.name
+    tree = parse_nav(nav, module)
+    print(emit_toc(tree, args.root), end="")
 
 
 if __name__ == "__main__":
