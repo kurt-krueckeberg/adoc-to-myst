@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
 
 
-ANTORA_YML = Path.home() / "antora-nla" / "antora.yml"
 # Set to None to write to stdout; set to a Path(...) later if desired
 OUTPUT_PATH = None
 
 NAV_LINE_RE = re.compile(r'^(\*+)\s+xref:([^\[]+)\[\]\s*$')
 NAV_REF_RE = re.compile(r'^(?:(?P<module>[^:]+):)?(?P<doc>.+?)\.adoc$')
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build a Sphinx _toc.yml-style listing from an Antora antora.yml file."
+    )
+    parser.add_argument(
+        "antora_yml",
+        type=Path,
+        help="Path to antora.yml",
+    )
+    return parser.parse_args()
 
 
 def read_antora_nav_list(antora_yml: Path) -> list[str]:
@@ -112,12 +124,14 @@ def yaml_lines_for_entries(entries: list[dict], indent: int = 0) -> list[str]:
 
 
 def main() -> None:
-    nav_list = read_antora_nav_list(ANTORA_YML)
+    args = parse_args()
+    antora_yml = args.antora_yml.expanduser().resolve()
+    nav_list = read_antora_nav_list(antora_yml)
 
     all_entries: list[dict] = []
 
     for rel_nav in nav_list:
-        nav_path = (Path.home() / "antora-nla" / rel_nav).resolve()
+        nav_path = (antora_yml.parent / rel_nav).resolve()
         if not nav_path.exists():
             raise FileNotFoundError(f"Nav file not found: {nav_path}")
 
