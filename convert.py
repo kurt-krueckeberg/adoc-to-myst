@@ -1608,7 +1608,8 @@ def convert_flat_table(elem, current_doc):
     out += "   :header-rows: 1\n\n"
 
     for row in rows:
-        first_paras = render_cell_paragraphs(row[0], current_doc)
+        first_paras = render_cell_paragraphs_rst(row[0], current_doc)
+
         out += emit_flat_table_first_cell(first_paras)
 
         for cell in row[1:]:
