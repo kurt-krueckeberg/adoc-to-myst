@@ -1344,7 +1344,16 @@ def convert_simple_list_table(elem, current_doc):
 
     for row in rows:
         first_paras = render_cell_paragraphs(row[0], current_doc)
-        out += emit_list_table_cell(first_paras, "* ")
+
+        first_lines = first_paras[0].splitlines() or [""]
+        out += f"* - {first_lines[0]}\n"
+        for line in first_lines[1:]:
+            out += f"    {line}\n"
+
+        for para in first_paras[1:]:
+            out += "    \n"
+            for line in (para.splitlines() or [""]):
+                out += f"    {line}\n"
 
         for cell in row[1:]:
             paras = render_cell_paragraphs(cell, current_doc)
