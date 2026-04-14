@@ -1224,17 +1224,16 @@ def emit_list_table_cell(paras, indent):
 def emit_flat_table_first_cell(paras):
     out = ""
 
-    first_lines = paras[0].splitlines() or [""]
-    out += f"   * - {first_lines[0]}\n"
-    for line in first_lines[1:]:
-        out += f"       {line}\n"
+    first_text = paras[0].replace("\n", " ")
+    out += f"   * - {first_text}\n"
 
     for para in paras[1:]:
         out += "       \n"
-        for line in (para.splitlines() or [""]):
+        for line in ((para.replace("\n", " ")).splitlines() or [""]):
             out += f"       {line}\n"
 
     return out
+
 
 def emit_flat_table_cell(cell, current_doc, indent):
     attrs = []
@@ -1256,19 +1255,17 @@ def emit_flat_table_cell(cell, current_doc, indent):
     paras = render_cell_paragraphs_rst(cell, current_doc)
     out = ""
 
-    first_lines = paras[0].splitlines() or [""]
-    first_line = first_lines[0]
+    first_text = paras[0].replace("\n", " ")
     prefix = " ".join(attrs).strip()
     if prefix:
-        first_line = (prefix + " " + first_line).rstrip()
+        first_text = (prefix + " " + first_text).rstrip()
 
-    out += f"{indent}- {first_line}\n"
-    for line in first_lines[1:]:
-        out += f"{indent}  {line}\n"
+    out += f"{indent}- {first_text}\n"
 
     for para in paras[1:]:
         out += f"{indent}  \n"
-        for line in para.splitlines():
+        para_text = para.replace("\n", " ")
+        for line in (para_text.splitlines() or [""]):
             out += f"{indent}  {line}\n"
 
     return out
