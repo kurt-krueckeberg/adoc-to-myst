@@ -1207,14 +1207,23 @@ def widths_from_colspecs(elem, prefer_ratio=True):
     return " ".join(str(x) for x in rounded)
 
 def emit_list_table_cell(paras, indent):
-    out = f"{indent}- {paras[0]}\n"
+    out = ""
+
+    first_lines = paras[0].splitlines() or [""]
+    out += f"{indent}- {first_lines[0]}\n"
+    for line in first_lines[1:]:
+        out += f"{indent}  {line}\n"
+
     for para in paras[1:]:
         out += f"{indent}  \n"
-        out += f"{indent}  {para}\n"
+        for line in (para.splitlines() or [""]):
+            out += f"{indent}  {line}\n"
+
     return out
 
 def emit_flat_table_first_cell(paras):
     out = ""
+
     first_lines = paras[0].splitlines() or [""]
     out += f"   * - {first_lines[0]}\n"
     for line in first_lines[1:]:
@@ -1222,7 +1231,7 @@ def emit_flat_table_first_cell(paras):
 
     for para in paras[1:]:
         out += "       \n"
-        for line in para.splitlines():
+        for line in (para.splitlines() or [""]):
             out += f"       {line}\n"
 
     return out
