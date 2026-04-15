@@ -769,7 +769,7 @@ def is_sidebar_subtitle_candidate(elem):
 
 def convert_sidebar(elem, current_doc):
     title_elem = elem.find("title")
-    title = render_inline(title_elem, current_doc).strip() if title_elem is not None else ""
+    title = render_inline(title_elem, current_doc).strip() if title_elem is not None else "Sidebar"
 
     subtitle = None
     body_children = []
@@ -788,20 +788,27 @@ def convert_sidebar(elem, current_doc):
 
         body_children.append(child)
 
-    dropdown_title = title or "Sidebar"
+    # Antora sidebars map more naturally to a single generic MyST admonition
+    # than to a dropdown. If the sidebar only contains a single admonition-like
+    # child (common in the generated DocBook), unwrap it so we do not create a
+    # nested admonition inside another admonition.
+    admonition_like_tags = {"note", "tip", "important", "warning", "caution"}
+    if len(body_children) == 1 and body_children[0].tag in admonition_like_tags:
+        body_source = list(body_children[0])
+    else:
+        body_source = body_children
 
-    out = f"```{{dropdown}} {dropdown_title}\n"
-    out += ":open:\n\n"
+    out = f":::{{admonition}} {title}\n\n"
 
     if subtitle:
         out += f"**{subtitle}**\n\n"
 
-    for child in body_children:
+    for child in body_source:
         rendered = convert_element(child, current_doc)
         if rendered:
             out += rendered
 
-    out += "```\n\n"
+    out += ":::\n\n"
     return out
 
 def convert_blockquote(elem, current_doc):
