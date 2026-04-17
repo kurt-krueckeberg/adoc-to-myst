@@ -1,11 +1,7 @@
 import xml.etree.ElementTree as ET
 import re
 import os
-from decimal import Decimal, InvalidOperation
-from math import gcd
-from functools import reduce
 from pathlib import PurePosixPath, Path
-import json
 
 COMPONENT_ROOTS = {}
 COMPONENTS_FILE_SUPPLIED = False
@@ -546,197 +542,11 @@ def render_cell_paragraphs(elem, current_doc):
     text = render_inline(elem, current_doc)
     return [text] if text else [""]
 
-def strip_doc_suffix(path):
-    p = PurePosixPath(path)
-    if p.suffix.lower() in (".md", ".rst", ".adoc", ".xml"):
-        return p.with_suffix("").as_posix()
-    return p.as_posix()
 
-def escape_rst_role_text(text):
-    if not text:
-        return text
-    return text.replace("\\", "\\\\").replace("`", "\\`")
-def rst_doc_role(target, current_doc, label=None):
-    parsed = split_antora_target(target)
-    if not parsed:
-        href = normalize_docbook_href(target, current_doc)
-        label = escape_rst_role_text(label or href)
-        return f"`{label} <{href}>`_"
 
-    if parsed["kind"] == "cross_component_page":
-        doc_target = (PurePosixPath(parsed["module"]) / PurePosixPath(parsed["page"]).with_suffix("")).as_posix()
-        role_name = f"external+{parsed['component']}:doc"
-        if label:
-            return f":{role_name}:`{escape_rst_role_text(label)} <{doc_target}>`"
-        return f":{role_name}:`{doc_target}`"
 
-    href = normalize_docbook_href(target, current_doc)
-    fragment = ""
-    if "#" in href:
-        href, frag = href.split("#", 1)
-        fragment = "#" + frag
 
-    if fragment:
-        full_target = href + fragment
-        label = escape_rst_role_text(label or full_target)
-        return f"`{label} <{full_target}>`_"
 
-    doc_target = strip_doc_suffix(href)
-    if label:
-        return f":doc:`{escape_rst_role_text(label)} <{doc_target}>`"
-    return f":doc:`{doc_target}`"
-
-def render_xref_rst(elem, current_doc):
-    target = (
-        elem.attrib.get("linkend", "").strip()
-        or elem.attrib.get("endterm", "").strip()
-    )
-    if not target:
-        return ""
-
-    label = render_inline_rst(elem, current_doc).strip()
-
-    auto_label = (
-        not label
-        or label == target
-        or label == os.path.basename(target)
-        or label.endswith(".xml")
-    )
-
-    if auto_label:
-        parsed = split_antora_target(target)
-        if parsed and parsed["kind"] == "cross_component_page":
-            require_component_mapping_for_empty_cross_component_xref(target)
-        src = adoc_source_from_target(target, current_doc)
-        if src:
-            title = extract_adoc_title(src)
-            if title:
-                label = title
-            else:
-                label = fallback_label_from_target(target)
-        else:
-            label = fallback_label_from_target(target)
-
-    return rst_doc_role(target, current_doc, label or None)
-
-def render_link_rst(elem, current_doc):
-    ulink = elem.find("ulink")
-    if ulink is not None:
-        url = ulink.attrib.get("url", "").strip()
-        label = append_tail_to_link_label(link_label_from_ulink(ulink), elem.tail)
-
-        auto_label = (
-            not label
-            or label == url
-            or label == os.path.basename(url)
-            or label.endswith(".xml")
-        )
-
-        parsed = split_antora_target(url)
-        if parsed and parsed["kind"] == "cross_component_page" and auto_label:
-            require_component_mapping_for_empty_cross_component_xref(url)
-
-        if auto_label and (parsed is not None or url.endswith((".xml", ".adoc", ".md"))):
-            src = adoc_source_from_target(url, current_doc)
-            if src:
-                title = extract_adoc_title(src)
-                if title:
-                    label = title
-                else:
-                    label = fallback_label_from_target(url)
-            else:
-                label = fallback_label_from_target(url)
-
-        if parsed is not None or url.endswith((".xml", ".adoc", ".md")):
-            return rst_doc_role(url, current_doc, label or None)
-
-        href = normalize_docbook_href(url, current_doc)
-        label = escape_rst_role_text(label or href)
-        return f"`{label} <{href}>`_"
-
-    linkend = elem.attrib.get("linkend", "").strip()
-    if linkend:
-        label = render_inline_rst(elem, current_doc).strip()
-
-        auto_label = (
-            not label
-            or label == linkend
-            or label == os.path.basename(linkend)
-            or label.endswith(".xml")
-        )
-
-        parsed = split_antora_target(linkend)
-        if parsed and parsed["kind"] == "cross_component_page" and auto_label:
-            require_component_mapping_for_empty_cross_component_xref(linkend)
-
-        if auto_label:
-            src = adoc_source_from_target(linkend, current_doc)
-            if src:
-                title = extract_adoc_title(src)
-                if title:
-                    label = title
-                else:
-                    label = fallback_label_from_target(linkend)
-            else:
-                label = fallback_label_from_target(linkend)
-
-        return rst_doc_role(linkend, current_doc, label or None)
-
-    return ""
-
-def render_inline_rst(elem, current_doc):
-    out = ""
-
-    if elem.text:
-        out += elem.text
-
-    for child in elem:
-        if child.tag == "emphasis":
-            role = child.attrib.get("role", "")
-            inner = render_inline_rst(child, current_doc)
-            if role == "strong":
-                out += f"**{inner}**"
-            else:
-                out += f"*{inner}*"
-
-        elif child.tag == "xref":
-            out += render_xref_rst(child, current_doc)
-
-        elif child.tag == "ulink":
-            url = child.attrib.get("url", "")
-            href = normalize_docbook_href(url, current_doc)
-            label = render_inline_rst(child, current_doc) or href
-            label = escape_rst_role_text(label)
-            out += f"`{label} <{href}>`_"
-
-        elif child.tag == "link":
-            out += render_link_rst(child, current_doc)
-
-        else:
-            out += render_inline_rst(child, current_doc)
-
-        if child.tail:
-            if child.tag == "link" and child.tail.strip():
-                pass
-            else:
-                out += child.tail
-
-    return out.strip() if elem.tag in ("para", "simpara") else out
-
-def render_cell_paragraphs_rst(elem, current_doc):
-    paras = []
-
-    for child in elem:
-        if child.tag in ("simpara", "para"):
-            text = render_inline_rst(child, current_doc)
-            if text:
-                paras.append(text)
-
-    if paras:
-        return paras
-
-    text = render_inline_rst(elem, current_doc)
-    return [text] if text else [""]
 
 def render_blocks(elem, current_doc, level=1):
     out = ""
@@ -1053,18 +863,7 @@ def convert_itemizedlist(elem, current_doc):
 def convert_orderedlist(elem, current_doc):
     return _convert_list(elem, current_doc, lambda n: f"{n}.") + "\n"
 
-def cell_has_span(entry):
-    return (
-        "namest" in entry.attrib
-        or "nameend" in entry.attrib
-        or "morerows" in entry.attrib
-    )
 
-def table_has_spans(elem):
-    for entry in elem.findall(".//entry"):
-        if cell_has_span(entry):
-            return True
-    return False
 
 def convert_admonition(elem, current_doc):
     tag_to_name = {
@@ -1106,112 +905,9 @@ def get_rows(elem):
             rows.append(cells)
     return rows
 
-def parse_colwidth_value(colwidth):
-    """
-    Parse DocBook colwidth values like:
-      17*
-      72.25*
-      42.5*
-    Return Decimal or None.
-    """
-    if not colwidth:
-        return None
 
-    value = colwidth.strip()
 
-    m = re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)\*', value)
-    if m:
-        try:
-            return Decimal(m.group(1))
-        except InvalidOperation:
-            return None
 
-    m = re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)', value)
-    if m:
-        try:
-            return Decimal(m.group(1))
-        except InvalidOperation:
-            return None
-
-    return None
-
-def decimals_to_scaled_ints(values):
-    """
-    Convert Decimals to integers by scaling to the maximum number
-    of decimal places present.
-    Example: [42.5, 85, 297.5] -> [425, 850, 2975]
-    """
-    exponents = [abs(v.as_tuple().exponent) for v in values]
-    scale = max(exponents) if exponents else 0
-    factor = Decimal(10) ** scale
-    return [int(v * factor) for v in values]
-
-def reduce_ratio(ints):
-    """
-    Reduce a list of integers to lowest whole-number ratio.
-    Example: [425, 850, 2975] -> [1, 2, 7]
-    """
-    g = reduce(gcd, ints)
-    if g == 0:
-        return ints
-    return [n // g for n in ints]
-
-def widths_from_colspecs(elem, prefer_ratio=True):
-    """
-    Read <colspec colwidth="..."> and return a MyST widths string.
-
-    If prefer_ratio is True, return a simple whole-number ratio by
-    normalizing against the smallest column width and rounding.
-
-    Examples:
-      8.3333*,25*,16.6666*,8.3333*,25*,16.6668* -> '1 3 2 1 3 2'
-      85*,42.5*,42.5*,42.5* -> '2 1 1 1'
-
-    Otherwise return integer percentages.
-    """
-    tgroup = elem.find("tgroup")
-    if tgroup is None:
-        return None
-
-    colspecs = tgroup.findall("colspec")
-    if not colspecs:
-        return None
-
-    raw = []
-    for colspec in colspecs:
-        w = parse_colwidth_value(colspec.attrib.get("colwidth", ""))
-        if w is None:
-            return None
-        raw.append(w)
-
-    if not raw:
-        return None
-
-    if prefer_ratio:
-        smallest = min(raw)
-        if smallest == 0:
-            return None
-
-        ratio = []
-        for w in raw:
-            n = int((w / smallest).to_integral_value(rounding="ROUND_HALF_UP"))
-            ratio.append(max(1, n))
-
-        return " ".join(str(x) for x in ratio)
-
-    total = sum(raw)
-    if total == 0:
-        return None
-
-    exact = [(w * Decimal("100")) / total for w in raw]
-    rounded = [int(x.to_integral_value(rounding="ROUND_HALF_UP")) for x in exact]
-
-    diff = 100 - sum(rounded)
-    if diff != 0:
-        rounded[-1] += diff
-
-    rounded = [max(1, x) for x in rounded]
-    return " ".join(str(x) for x in rounded)
 
 def emit_list_table_cell(paras, indent):
     out = ""
@@ -1228,91 +924,10 @@ def emit_list_table_cell(paras, indent):
 
     return out
 
-def emit_flat_table_first_cell(paras):
-    out = ""
-
-    first_text = paras[0].replace("\n", " ")
-    out += f"   * - {first_text}\n"
-
-    for para in paras[1:]:
-        out += "       \n"
-        for line in ((para.replace("\n", " ")).splitlines() or [""]):
-            out += f"       {line}\n"
-
-    return out
 
 
-def emit_flat_table_cell(cell, current_doc, indent):
-    attrs = []
 
-    if "morerows" in cell.attrib:
-        try:
-            attrs.append(f":rspan:`{int(cell.attrib['morerows'])}`")
-        except ValueError:
-            pass
 
-    if "morecols" in cell.attrib:
-        try:
-            attrs.append(f":cspan:`{int(cell.attrib['morecols'])}`")
-        except ValueError:
-            pass
-    elif "namest" in cell.attrib and "nameend" in cell.attrib:
-        attrs.append(":cspan:`1`")
-
-    paras = render_cell_paragraphs_rst(cell, current_doc)
-    out = ""
-
-    first_text = paras[0].replace("\n", " ")
-    prefix = " ".join(attrs).strip()
-    if prefix:
-        first_text = (prefix + " " + first_text).rstrip()
-
-    out += f"{indent}- {first_text}\n"
-
-    for para in paras[1:]:
-        out += f"{indent}  \n"
-        para_text = para.replace("\n", " ")
-        for line in (para_text.splitlines() or [""]):
-            out += f"{indent}  {line}\n"
-
-    return out
-
-def parse_docbook_with_table_widths(doc):
-    """
-    Parse the DocBook file while preserving table-width processing instructions
-    like <?dbhtml table-width="100%"?> by attaching the discovered width to
-    the currently open table/informaltable element as a synthetic attribute
-    named _table_width.
-    """
-    root = None
-    table_stack = []
-
-    for event, node in ET.iterparse(doc, events=("start", "end", "pi")):
-        if event == "start":
-            if root is None:
-                root = node
-
-            if node.tag in ("table", "informaltable"):
-                table_stack.append(node)
-
-        elif event == "pi":
-            text = getattr(node, "text", "") or ""
-            m = re.search(r'table-width="([^"]+)"', text)
-            if m and table_stack:
-                table_stack[-1].attrib["_table_width"] = m.group(1)
-
-        elif event == "end":
-            if node.tag in ("table", "informaltable"):
-                if table_stack and table_stack[-1] is node:
-                    table_stack.pop()
-
-    return root
-
-def table_width_from_pi(elem):
-    """
-    Return a table width such as '100%' if one was attached during parsing.
-    """
-    return elem.attrib.get("_table_width")
 
 def header_rows_from_table(elem):
     """
@@ -1328,20 +943,13 @@ def header_rows_from_table(elem):
     rows = thead.findall("row")
     return len(rows) if rows else 1
 
+
 def convert_simple_list_table(elem, current_doc):
     rows = get_rows(elem)
     if not rows:
         return ""
 
-    out = "::: {list-table}\n"
-
-    table_width = table_width_from_pi(elem)
-    if table_width:
-        out += f":width: {table_width}\n"
-
-    widths = widths_from_colspecs(elem, prefer_ratio=True)
-    if widths:
-        out += f":widths: {widths}\n"
+    out = "```{list-table}\n"
 
     header_rows = header_rows_from_table(elem)
     if header_rows > 0:
@@ -1366,146 +974,8 @@ def convert_simple_list_table(elem, current_doc):
             paras = render_cell_paragraphs(cell, current_doc)
             out += emit_list_table_cell(paras, "  ")
 
-    out += ":::\n\n"
+    out += "```\n\n"
     return out
-
-def entry_children(elem):
-    return [child for child in elem if isinstance(child.tag, str)]
-
-def is_empty_entry(entry):
-    if (entry.text or "").strip():
-        return False
-    for child in entry:
-        if isinstance(child.tag, str):
-            return False
-        if (child.tail or "").strip():
-            return False
-    return True
-
-def entry_is_image_only(entry):
-    children = entry_children(entry)
-    if not children:
-        return False
-    return all(child.tag in ("mediaobject", "figure", "informalfigure") for child in children)
-
-def entry_is_blocky(entry):
-    children = entry_children(entry)
-    if not children:
-        return False
-
-    block_tags = {
-        "literallayout",
-        "para",
-        "simpara",
-        "itemizedlist",
-        "orderedlist",
-        "blockquote",
-        "sidebar",
-        "variablelist",
-        "informaltable",
-        "table",
-        "mediaobject",
-        "figure",
-        "informalfigure",
-    }
-
-    if any(child.tag not in block_tags for child in children):
-        return False
-
-    # Multiple block-level children in one cell definitely means
-    # this is layout/content, not a simple list-table cell.
-    if len(children) > 1:
-        return True
-
-    # A single media/figure/literal block should also count as blocky.
-    if children[0].tag in ("literallayout", "mediaobject", "figure", "informalfigure"):
-        return True
-
-    text = "".join(entry.itertext()).strip()
-    if text.count("\n") >= 3:
-        return True
-
-    return False
-
-def table_rows_direct(elem):
-    rows = []
-    for row in elem.findall(".//row"):
-        cells = row.findall("entry")
-        if cells:
-            rows.append(cells)
-    return rows
-
-def is_image_layout_table(elem):
-    if header_rows_from_table(elem) != 0:
-        return False
-    if table_has_spans(elem):
-        return False
-
-    rows = table_rows_direct(elem)
-    if not rows:
-        return False
-
-    saw_nonempty = False
-    for row in rows:
-        for cell in row:
-            if is_empty_entry(cell):
-                continue
-            saw_nonempty = True
-            if not entry_is_image_only(cell):
-                return False
-
-    return saw_nonempty
-
-def is_parallel_layout_table(elem):
-    if table_has_spans(elem):
-        return False
-
-    rows = table_rows_direct(elem)
-    if not rows:
-        return False
-
-    header_rows = header_rows_from_table(elem)
-
-    if header_rows == 0:
-        body_rows = rows
-    elif header_rows == 1:
-        if len(rows) < 2:
-            return False
-        body_rows = rows[1:]
-    else:
-        return False
-
-    if not body_rows:
-        return False
-
-    if any(len(row) != 2 for row in body_rows):
-        return False
-
-    saw_blocky = False
-    for row in body_rows:
-        for cell in row:
-            if is_empty_entry(cell):
-                continue
-            if entry_is_blocky(cell):
-                saw_blocky = True
-            else:
-                return False
-
-    return saw_blocky
-
-def render_entry_blocks(entry, current_doc, level=1):
-    out = ""
-
-    if (entry.text or "").strip():
-        out += entry.text.strip() + "\n\n"
-
-    for child in entry:
-        if isinstance(child.tag, str):
-            rendered = convert_element(child, current_doc, level)
-            if rendered:
-                out += rendered
-
-    return out.strip()
 
 def render_literallayout_text(elem, current_doc):
     out = elem.text or ""
@@ -1521,108 +991,17 @@ def render_literallayout_text(elem, current_doc):
 
     return out
 
-def convert_image_layout_table(elem, current_doc):
-    rows = table_rows_direct(elem)
-    if not rows:
-        return ""
 
-    out = "::::{grid} 1 1 2 2\n"
-    out += ":gutter: 2\n\n"
 
-    for row in rows:
-        for cell in row:
-            if is_empty_entry(cell):
-                continue
-
-            content = render_entry_blocks(cell, current_doc).strip()
-            if not content:
-                continue
-
-            out += ":::{grid-item}\n\n"
-            out += content + "\n\n"
-            out += ":::\n\n"
-
-    out += "::::\n\n"
-    return out
-
-def convert_parallel_layout_table(elem, current_doc):
-    rows = table_rows_direct(elem)
-    if not rows:
-        return ""
-
-    header_rows = header_rows_from_table(elem)
-    if header_rows == 0:
-        body_rows = rows
-    elif header_rows == 1:
-        if len(rows) < 2:
-            return ""
-        body_rows = rows[1:]
-    else:
-        return ""
-
-    if len(body_rows) != 1:
-        return ""
-
-    row = body_rows[0]
-    if len(row) != 2:
-        return ""
-
-    left_cell, right_cell = row
-
-    left = render_entry_blocks(left_cell, current_doc).strip()
-    right = render_entry_blocks(right_cell, current_doc).strip()
-
-    out = "::::{grid} 1 1 2 2\n"
-    out += ":gutter: 2\n\n"
-
-    out += ":::{grid-item}\n\n"
-    if left:
-        out += left + "\n\n"
-    out += ":::\n\n"
-
-    out += ":::{grid-item}\n\n"
-    if right:
-        out += right + "\n\n"
-    out += ":::\n\n"
-
-    out += "::::\n\n"
-    return out
 
 def convert_table(elem, current_doc):
     title = elem.find("title")
     caption = render_inline(title, current_doc) if title is not None else ""
 
-    if is_image_layout_table(elem):
-        out = convert_image_layout_table(elem, current_doc)
-    elif is_parallel_layout_table(elem):
-        out = convert_parallel_layout_table(elem, current_doc)
-    elif table_has_spans(elem):
-        out = convert_flat_table(elem, current_doc)
-    else:
-        out = convert_simple_list_table(elem, current_doc)
+    out = convert_simple_list_table(elem, current_doc)
 
     if caption:
         return caption + "\n\n" + out
-    return out
-
-def convert_flat_table(elem, current_doc):
-    rows = get_rows(elem)
-    if not rows:
-        return ""
-
-    out = "```{eval-rst}\n"
-    out += ".. flat-table::\n"
-    out += "   :header-rows: 1\n\n"
-
-    for row in rows:
-        first_paras = render_cell_paragraphs_rst(row[0], current_doc)
-
-        out += emit_flat_table_first_cell(first_paras)
-
-        for cell in row[1:]:
-            out += emit_flat_table_cell(cell, current_doc, "     ")
-
-    out += "```\n\n"
     return out
 
 def convert_element(elem, current_doc, level=1):
@@ -1718,8 +1097,9 @@ def convert_element(elem, current_doc, level=1):
 
     return out
 
+
 def convert(doc, current_doc):
-    root = parse_docbook_with_table_widths(doc)
+    root = ET.parse(doc).getroot()
     out = ""
 
     title = root.find("title")
@@ -1738,23 +1118,3 @@ def convert(doc, current_doc):
 
     return out
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("doc4")
-    parser.add_argument("current_doc")
-    parser.add_argument("modules_dir")
-    parser.add_argument("--components-file", default="")
-    args = parser.parse_args()
-
-    SOURCE_ROOT = normalize_component_root_path(args.modules_dir)
-
-    components = {}
-    if args.components_file:
-        COMPONENTS_FILE_SUPPLIED = True
-        components.update(parse_components_file(args.components_file))
-
-    COMPONENT_ROOTS = components
-
-    print(convert(args.doc4, args.current_doc))
