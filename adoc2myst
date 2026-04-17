@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # adoc2myst: convert an Antora/AsciiDoc page to MyST Markdown via
-# Asciidoctor DocBook 5 -> DocBook 4 -> convert.py.
+# Asciidoctor DocBook 5 -> DocBook 4 -> convert2jupbook2.py.
 #
 # Usage:
 #   adoc2myst --modules-dir /path/to/modules \
@@ -9,34 +9,6 @@
 #             [--doc4-dir /path/to/folder] \
 #             [-o output.md] \
 #             <input.adoc>
-#
-# Arguments:
-#   <input.adoc>
-#       Source AsciiDoc page to convert.
-#
-#   --modules-dir /path/to/modules
-#       Required. Path to the current Antora component's modules directory,
-#       e.g. ~/antora-nla/modules. Used to infer the current page's logical
-#       Antora path so cross-module xrefs and image paths can be rewritten
-#       correctly.
-#
-#   --components-file /path/to/components.yml
-#       Optional. YAML file mapping other Antora component names to their
-#       modules directories. Needed for cross-component xrefs with empty [] so
-#       the converter can read the target page title.
-#
-#       Example:
-#         components:
-#           genealogy: /home/kurt/antora-genealogy/modules
-#           immanuel: /home/kurt/antora-immanuel/modules
-#
-#   --doc4-dir /path/to/folder
-#       Optional. Directory in which to keep intermediate doc5.xml,
-#       doc5-nons.xml, and doc4.xml files for inspection/debugging.
-#
-#   -o output.md
-#       Optional. Output path for the generated MyST Markdown file.
-#       If omitted, the output file is written next to the input file.
 
 set -euo pipefail
 
@@ -67,7 +39,6 @@ import sys
 
 input_path = Path(sys.argv[1]).expanduser().resolve()
 modules_dir = Path(sys.argv[2]).expanduser().resolve()
-
 
 def as_md(module, rel_parts):
     rel = Path(*rel_parts)
@@ -199,12 +170,12 @@ asciidoctor -b docbook "$INPUT" -o "$DOC5"
 sed 's/xmlns="http:\/\/docbook.org\/ns\/docbook"//' "$DOC5" > "$DOC5_NONS"
 xsltproc --path "$XSL_DIR" "$XSL_FILE" "$DOC5_NONS" > "$DOC4"
 
-CONVERT_ARGS=("$DOC4" "$CURRENT_DOC" "$MODULES_DIR")
+CONVERT_ARGS=(-o "$OUTPUT_MD" "$DOC4" "$CURRENT_DOC" "$MODULES_DIR")
 if [[ -n "$COMPONENTS_FILE" ]]; then
   CONVERT_ARGS+=(--components-file "$COMPONENTS_FILE")
 fi
 
-python3 "$SCRIPT_DIR/convert2jupbook2.py" "${CONVERT_ARGS[@]}" > "$OUTPUT_MD"
+python3 "$SCRIPT_DIR/convert2jupbook2.py" "${CONVERT_ARGS[@]}"
 
 echo "Done: $OUTPUT_MD"
 echo "Logical current document: $CURRENT_DOC"

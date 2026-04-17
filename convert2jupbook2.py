@@ -1,14 +1,240 @@
 import xml.etree.ElementTree as ET
 import re
 import os
+import shutil
+import html
 from pathlib import PurePosixPath, Path
 
 COMPONENT_ROOTS = {}
 COMPONENTS_FILE_SUPPLIED = False
 SOURCE_ROOT = None
+OUTPUT_MD_PATH = None
+ARTIFACT_DIR = None
+CURRENT_ADOC_SOURCE = None
+CURRENT_ADOC_TABLE_BLOCKS = []
+CURRENT_TABLE_INDEX = 0
+FULL_ADOC_PRESERVED = False
 
 def die(msg):
     raise SystemExit(msg)
+
+
+def extract_asciidoc_table_blocks(path):
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines(True)
+    except OSError:
+        return []
+
+    blocks = []
+    i = 0
+    n = len(lines)
+
+    def is_table_delim(line):
+        return re.match(r'^\s*([|!,:;])={3,}\s*$', line) is not None
+
+    metadata_prefixes = (".", "[", "//")
+
+    while i < n:
+        if not is_table_delim(lines[i]):
+            i += 1
+            continue
+
+        start = i
+        j = i + 1
+        while j < n and not is_table_delim(lines[j]):
+            j += 1
+        if j >= n:
+            break
+
+        meta_start = start
+        k = start - 1
+        while k >= 0:
+            stripped = lines[k].strip()
+            if not stripped:
+                k -= 1
+                continue
+            if stripped.startswith(metadata_prefixes):
+                meta_start = k
+                k -= 1
+                continue
+            break
+
+        blocks.append("".join(lines[meta_start:j + 1]).rstrip() + "\n")
+        i = j + 1
+
+    return blocks
+
+def setup_output_artifact_context(current_doc, output_md_path):
+    global OUTPUT_MD_PATH, ARTIFACT_DIR, CURRENT_ADOC_SOURCE, CURRENT_ADOC_TABLE_BLOCKS, CURRENT_TABLE_INDEX, FULL_ADOC_PRESERVED
+
+    OUTPUT_MD_PATH = Path(output_md_path).expanduser().resolve()
+    ARTIFACT_DIR = None
+    CURRENT_ADOC_SOURCE = None
+    CURRENT_ADOC_TABLE_BLOCKS = []
+    CURRENT_TABLE_INDEX = 0
+    FULL_ADOC_PRESERVED = False
+
+    if OUTPUT_MD_PATH is not None:
+        ARTIFACT_DIR = OUTPUT_MD_PATH.parent / "_table-artifacts"
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+
+    CURRENT_ADOC_SOURCE = current_adoc_source_from_current_doc(current_doc)
+    if CURRENT_ADOC_SOURCE is not None:
+        CURRENT_ADOC_TABLE_BLOCKS = extract_asciidoc_table_blocks(CURRENT_ADOC_SOURCE)
+
+def preserve_full_asciidoc_source():
+    global FULL_ADOC_PRESERVED
+
+    if FULL_ADOC_PRESERVED or CURRENT_ADOC_SOURCE is None or ARTIFACT_DIR is None:
+        return
+
+    target = ARTIFACT_DIR / f"{CURRENT_ADOC_SOURCE.stem}.original.adoc"
+    shutil.copyfile(CURRENT_ADOC_SOURCE, target)
+    FULL_ADOC_PRESERVED = True
+
+def current_table_basename(index):
+    stem = OUTPUT_MD_PATH.stem if OUTPUT_MD_PATH is not None else PurePosixPath("page.md").stem
+    return f"{stem}-table-{index:02d}"
+
+def write_complex_table_artifacts(index, html_text):
+    if ARTIFACT_DIR is None:
+        return None
+
+    preserve_full_asciidoc_source()
+
+    basename = current_table_basename(index)
+
+    html_path = ARTIFACT_DIR / f"{basename}.html"
+    html_path.write_text(html_text, encoding="utf-8")
+
+    source_path = ARTIFACT_DIR / f"{basename}.source.adoc"
+    if 1 <= index <= len(CURRENT_ADOC_TABLE_BLOCKS):
+        source_text = CURRENT_ADOC_TABLE_BLOCKS[index - 1]
+    else:
+        source_text = "// Original AsciiDoc table block could not be extracted reliably.\n"
+    source_path.write_text(source_text, encoding="utf-8")
+
+    return html_path
+
+def html_escape_text(text):
+    return html.escape(text, quote=False)
+
+def colname_to_index_map(elem):
+    mapping = {}
+    tgroup = elem.find("tgroup")
+    if tgroup is None:
+        return mapping
+    for idx, colspec in enumerate(tgroup.findall("colspec"), start=1):
+        name = colspec.attrib.get("colname")
+        if name:
+            mapping[name] = idx
+    return mapping
+
+def entry_colspan(entry, name_to_index):
+    namest = entry.attrib.get("namest")
+    nameend = entry.attrib.get("nameend")
+    if namest and nameend and namest in name_to_index and nameend in name_to_index:
+        return max(1, name_to_index[nameend] - name_to_index[namest] + 1)
+    return 1
+
+def entry_rowspan(entry):
+    morerows = entry.attrib.get("morerows")
+    if not morerows:
+        return 1
+    try:
+        return int(morerows) + 1
+    except ValueError:
+        return 1
+
+def cell_html_contents(entry, current_doc):
+    parts = []
+    for child in entry:
+        if child.tag in ("para", "simpara"):
+            text = render_inline(child, current_doc).strip()
+            if text:
+                parts.append(f"<p>{html_escape_text(text)}</p>")
+
+    if parts:
+        return "".join(parts)
+
+    text = render_inline(entry, current_doc).strip()
+    return html_escape_text(text) if text else ""
+
+def render_html_table_rows(parent, current_doc, name_to_index, cell_tag):
+    if parent is None:
+        return ""
+
+    rows = parent.findall("row")
+    if not rows:
+        return ""
+
+    out = []
+    for row in rows:
+        out.append("  <tr>")
+        for entry in row.findall("entry"):
+            attrs = []
+            rowspan = entry_rowspan(entry)
+            colspan = entry_colspan(entry, name_to_index)
+            if rowspan > 1:
+                attrs.append(f' rowspan="{rowspan}"')
+            if colspan > 1:
+                attrs.append(f' colspan="{colspan}"')
+            content = cell_html_contents(entry, current_doc)
+            out.append(f"    <{cell_tag}{''.join(attrs)}>{content}</{cell_tag}>")
+        out.append("  </tr>")
+    return "\n".join(out)
+
+def render_complex_html_table(elem, current_doc):
+    name_to_index = colname_to_index_map(elem)
+    thead = elem.find(".//thead")
+    tbody = elem.find(".//tbody")
+    tfoot = elem.find(".//tfoot")
+
+    parts = ["<table>"]
+
+    head_rows = render_html_table_rows(thead, current_doc, name_to_index, "th")
+    if head_rows:
+        parts.append("  <thead>")
+        parts.append(head_rows)
+        parts.append("  </thead>")
+
+    body_rows = render_html_table_rows(tbody, current_doc, name_to_index, "td")
+    if body_rows:
+        parts.append("  <tbody>")
+        parts.append(body_rows)
+        parts.append("  </tbody>")
+
+    foot_rows = render_html_table_rows(tfoot, current_doc, name_to_index, "td")
+    if foot_rows:
+        parts.append("  <tfoot>")
+        parts.append(foot_rows)
+        parts.append("  </tfoot>")
+
+    parts.append("</table>")
+    return "\n".join(parts) + "\n"
+
+def table_has_rowspan(elem):
+    return any(entry_rowspan(entry) > 1 for entry in elem.findall(".//entry"))
+
+def convert_complex_table(elem, current_doc, caption):
+    global CURRENT_TABLE_INDEX
+    CURRENT_TABLE_INDEX += 1
+
+    html_text = render_complex_html_table(elem, current_doc)
+    html_path = write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
+
+    include_name = html_path.name if html_path is not None else f"{current_table_basename(CURRENT_TABLE_INDEX)}.html"
+    include_rel = f"_table-artifacts/{include_name}"
+
+    out = ""
+    if caption:
+        out += f"::::{{table}} {caption}\n\n"
+    else:
+        out += "::::{table}\n\n"
+    out += f":::{{include}} {include_rel}\n"
+    out += ":::\n\n"
+    out += "::::\n\n"
+    return out
 
 def normalize_component_root_path(path_value):
     p = Path(path_value).expanduser()
@@ -998,7 +1224,13 @@ def convert_table(elem, current_doc):
     title = elem.find("title")
     caption = render_inline(title, current_doc) if title is not None else ""
 
+    if table_has_rowspan(elem):
+        return convert_complex_table(elem, current_doc, caption)
+
     out = convert_simple_list_table(elem, current_doc)
+
+    global CURRENT_TABLE_INDEX
+    CURRENT_TABLE_INDEX += 1
 
     if caption:
         return caption + "\n\n" + out
@@ -1098,7 +1330,8 @@ def convert_element(elem, current_doc, level=1):
     return out
 
 
-def convert(doc, current_doc):
+def convert(doc, current_doc, output_md_path):
+    setup_output_artifact_context(current_doc, output_md_path)
     root = ET.parse(doc).getroot()
     out = ""
 
@@ -1137,6 +1370,13 @@ def main():
         help="Path to the current Antora component's modules directory",
     )
     parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        dest="output_md",
+        help="Path to the output MyST Markdown file",
+    )
+    parser.add_argument(
         "--components-file",
         dest="components_file",
         help="Optional YAML file mapping Antora component names to module roots",
@@ -1151,7 +1391,10 @@ def main():
     COMPONENT_ROOTS = parse_components_file(args.components_file) if args.components_file else {}
 
     try:
-        sys.stdout.write(convert(args.docbook_xml, args.current_doc))
+        output_text = convert(args.docbook_xml, args.current_doc, args.output_md)
+        output_path = Path(args.output_md).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output_text, encoding="utf-8")
     except ET.ParseError as e:
         die(f"Error: failed to parse XML '{args.docbook_xml}': {e}")
     except FileNotFoundError as e:
