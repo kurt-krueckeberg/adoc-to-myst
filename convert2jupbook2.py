@@ -216,6 +216,13 @@ def render_complex_html_table(elem, current_doc):
 def table_has_rowspan(elem):
     return any(entry_rowspan(entry) > 1 for entry in elem.findall(".//entry"))
 
+def table_has_colspan(elem):
+    name_to_index = colname_to_index_map(elem)
+    return any(entry_colspan(entry, name_to_index) > 1 for entry in elem.findall(".//entry"))
+
+def table_requires_html_fallback(elem):
+    return table_has_rowspan(elem) or table_has_colspan(elem)
+
 def convert_complex_table(elem, current_doc, caption):
     global CURRENT_TABLE_INDEX
     CURRENT_TABLE_INDEX += 1
@@ -1224,7 +1231,7 @@ def convert_table(elem, current_doc):
     title = elem.find("title")
     caption = render_inline(title, current_doc) if title is not None else ""
 
-    if table_has_rowspan(elem):
+    if table_requires_html_fallback(elem):
         return convert_complex_table(elem, current_doc, caption)
 
     out = convert_simple_list_table(elem, current_doc)
