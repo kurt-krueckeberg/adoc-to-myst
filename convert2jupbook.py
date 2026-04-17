@@ -1118,3 +1118,45 @@ def convert(doc, current_doc):
 
     return out
 
+
+
+def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Convert DocBook 4 XML produced from Antora/AsciiDoc into MyST Markdown."
+    )
+    parser.add_argument("docbook_xml", help="Path to the DocBook 4 XML file")
+    parser.add_argument(
+        "current_doc",
+        help="Logical current document path, e.g. module/page.md",
+    )
+    parser.add_argument(
+        "modules_dir",
+        help="Path to the current Antora component's modules directory",
+    )
+    parser.add_argument(
+        "--components-file",
+        dest="components_file",
+        help="Optional YAML file mapping Antora component names to module roots",
+    )
+
+    args = parser.parse_args()
+
+    global SOURCE_ROOT, COMPONENT_ROOTS, COMPONENTS_FILE_SUPPLIED
+
+    SOURCE_ROOT = normalize_component_root_path(args.modules_dir)
+    COMPONENTS_FILE_SUPPLIED = bool(args.components_file)
+    COMPONENT_ROOTS = parse_components_file(args.components_file) if args.components_file else {}
+
+    try:
+        sys.stdout.write(convert(args.docbook_xml, args.current_doc))
+    except ET.ParseError as e:
+        die(f"Error: failed to parse XML '{args.docbook_xml}': {e}")
+    except FileNotFoundError as e:
+        die(f"Error: file not found: {e.filename}")
+
+
+if __name__ == "__main__":
+    main()
