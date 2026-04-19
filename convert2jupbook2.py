@@ -232,7 +232,24 @@ def table_has_rowspan(elem):
 
 def table_has_colspan(elem):
     name_to_index = colname_to_index_map(elem)
-    return any(entry_colspan(entry, name_to_index) > 1 for entry in elem.findall(".//entry"))
+    total_columns = table_total_columns(elem)
+
+    first_spanner_row = None
+    thead = elem.find(".//thead")
+    if thead is not None:
+        thead_rows = thead.findall("row")
+        if thead_rows and row_is_full_width_spanner(thead_rows[0], elem, name_to_index, total_columns):
+            first_spanner_row = thead_rows[0]
+
+    for row in elem.findall(".//row"):
+        for entry in row.findall("entry"):
+            colspan = entry_colspan(entry, name_to_index)
+            if colspan <= 1:
+                continue
+            if first_spanner_row is row and len(row.findall("entry")) == 1 and colspan == total_columns:
+                continue
+            return True
+    return False
 
 
 def table_requires_html_fallback(elem):
@@ -1124,12 +1141,107 @@ def convert_admonition(elem, current_doc):
     return out
 
 
-def get_rows(elem):
+def table_total_columns(elem):
+    tgroup = elem.find("tgroup")
+    if tgroup is None:
+        return 0
+
+    cols_attr = tgroup.attrib.get("cols")
+    if cols_attr:
+        try:
+            return int(cols_attr)
+        except ValueError:
+            pass
+
+    colspecs = tgroup.findall("colspec")
+    if colspecs:
+        return len(colspecs)
+
+    first_row = tgroup.find(".//row")
+    if first_row is None:
+        return 0
+
+    name_to_index = colname_to_index_map(elem)
+    return sum(entry_colspan(entry, name_to_index) for entry in first_row.findall("entry"))
+
+
+def row_effective_colcount(row, name_to_index):
+    return sum(entry_colspan(entry, name_to_index) for entry in row.findall("entry"))
+
+
+def row_is_full_width_spanner(row, elem, name_to_index=None, total_columns=None):
+    entries = row.findall("entry")
+    if len(entries) != 1:
+        return False
+
+    entry = entries[0]
+    if entry_rowspan(entry) > 1:
+        return False
+
+    if name_to_index is None:
+        name_to_index = colname_to_index_map(elem)
+    if total_columns is None:
+        total_columns = table_total_columns(elem)
+
+    if total_columns <= 1:
+        return False
+
+    return entry_colspan(entry, name_to_index) == total_columns
+
+
+def extract_full_width_spanner_caption(elem, current_doc):
+    name_to_index = colname_to_index_map(elem)
+    total_columns = table_total_columns(elem)
+
+    if total_columns <= 1:
+        return "", False
+
+    thead = elem.find(".//thead")
+    if thead is not None:
+        rows = thead.findall("row")
+        if rows and row_is_full_width_spanner(rows[0], elem, name_to_index, total_columns):
+            caption = " ".join(render_cell_paragraphs(rows[0].find("entry"), current_doc)).strip()
+            return caption, True
+
+    return "", False
+
+
+def get_rows(elem, skip_first_full_width_spanner=False):
     rows = []
-    for row in elem.findall(".//row"):
+    skipped = False
+    name_to_index = colname_to_index_map(elem)
+    total_columns = table_total_columns(elem)
+
+    tgroup = elem.find("tgroup")
+    if tgroup is None:
+        return rows
+
+    ordered_row_groups = []
+    thead = tgroup.find("thead")
+    tbody = tgroup.find("tbody")
+    tfoot = tgroup.find("tfoot")
+
+    if thead is not None:
+        ordered_row_groups.extend(thead.findall("row"))
+    if tbody is not None:
+        ordered_row_groups.extend(tbody.findall("row"))
+    if tfoot is not None:
+        ordered_row_groups.extend(tfoot.findall("row"))
+    if not ordered_row_groups:
+        ordered_row_groups.extend(tgroup.findall("row"))
+
+    for row in ordered_row_groups:
         cells = row.findall("entry")
-        if cells:
-            rows.append(cells)
+        if not cells:
+            continue
+        if (
+            skip_first_full_width_spanner
+            and not skipped
+            and row_is_full_width_spanner(row, elem, name_to_index, total_columns)
+        ):
+            skipped = True
+            continue
+        rows.append(cells)
     return rows
 
 
@@ -1147,21 +1259,35 @@ def emit_list_table_cell(paras, indent):
     return out
 
 
-def header_rows_from_table(elem):
+def header_rows_from_table(elem, skip_first_full_width_spanner=False):
     thead = elem.find(".//thead")
     if thead is None:
         return 0
+
     rows = thead.findall("row")
-    return len(rows) if rows else 1
+    if not rows:
+        return 1
+
+    if skip_first_full_width_spanner and row_is_full_width_spanner(rows[0], elem):
+        return max(0, len(rows) - 1)
+
+    return len(rows)
 
 
-def convert_simple_list_table(elem, current_doc):
-    rows = get_rows(elem)
+def convert_simple_list_table(elem, current_doc, caption=""):
+    spanner_caption, has_spanner_caption = extract_full_width_spanner_caption(elem, current_doc)
+    rows = get_rows(elem, skip_first_full_width_spanner=has_spanner_caption)
     if not rows:
         return ""
 
-    out = "```{list-table}\n"
-    header_rows = header_rows_from_table(elem)
+    final_caption = spanner_caption or caption
+
+    if final_caption:
+        out = f"```{{list-table}} {final_caption}\n"
+    else:
+        out = "```{list-table}\n"
+
+    header_rows = header_rows_from_table(elem, skip_first_full_width_spanner=has_spanner_caption)
     if header_rows > 0:
         out += f":header-rows: {header_rows}\n"
     out += "\n"
@@ -1205,13 +1331,11 @@ def convert_table(elem, current_doc):
     if table_requires_html_fallback(elem):
         return convert_complex_table(elem, current_doc, caption)
 
-    out = convert_simple_list_table(elem, current_doc)
+    out = convert_simple_list_table(elem, current_doc, caption=caption)
 
     global CURRENT_TABLE_INDEX
     CURRENT_TABLE_INDEX += 1
 
-    if caption:
-        return caption + "\n\n" + out
     return out
 
 
