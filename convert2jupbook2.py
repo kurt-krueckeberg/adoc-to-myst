@@ -65,7 +65,6 @@ def extract_asciidoc_table_blocks(path):
 
     return blocks
 
-
 def setup_output_artifact_context(current_doc, output_md_path):
     global OUTPUT_MD_PATH, ARTIFACT_DIR, CURRENT_ADOC_SOURCE, CURRENT_ADOC_TABLE_BLOCKS, CURRENT_TABLE_INDEX, FULL_ADOC_PRESERVED
 
@@ -78,12 +77,10 @@ def setup_output_artifact_context(current_doc, output_md_path):
 
     if OUTPUT_MD_PATH is not None:
         ARTIFACT_DIR = OUTPUT_MD_PATH.parent / "_table-artifacts"
-        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
     CURRENT_ADOC_SOURCE = current_adoc_source_from_current_doc(current_doc)
     if CURRENT_ADOC_SOURCE is not None:
         CURRENT_ADOC_TABLE_BLOCKS = extract_asciidoc_table_blocks(CURRENT_ADOC_SOURCE)
-
 
 def preserve_full_asciidoc_source():
     global FULL_ADOC_PRESERVED
@@ -95,15 +92,15 @@ def preserve_full_asciidoc_source():
     shutil.copyfile(CURRENT_ADOC_SOURCE, target)
     FULL_ADOC_PRESERVED = True
 
-
 def current_table_basename(index):
     stem = OUTPUT_MD_PATH.stem if OUTPUT_MD_PATH is not None else PurePosixPath("page.md").stem
     return f"{stem}-table-{index:02d}"
 
-
 def write_complex_table_artifacts(index, html_text):
     if ARTIFACT_DIR is None:
         return None
+
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
     preserve_full_asciidoc_source()
 
@@ -120,7 +117,6 @@ def write_complex_table_artifacts(index, html_text):
     source_path.write_text(source_text, encoding="utf-8")
 
     return html_path
-
 
 def html_escape_text(text):
     return html.escape(text, quote=False)
