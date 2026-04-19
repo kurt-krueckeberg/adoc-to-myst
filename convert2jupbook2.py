@@ -234,12 +234,10 @@ def table_has_colspan(elem):
     name_to_index = colname_to_index_map(elem)
     total_columns = table_total_columns(elem)
 
+    first_row = first_actual_table_row(elem)
     first_spanner_row = None
-    thead = elem.find(".//thead")
-    if thead is not None:
-        thead_rows = thead.findall("row")
-        if thead_rows and row_is_full_width_spanner(thead_rows[0], elem, name_to_index, total_columns):
-            first_spanner_row = thead_rows[0]
+    if first_row is not None and row_is_full_width_spanner(first_row, elem, name_to_index, total_columns):
+        first_spanner_row = first_row
 
     for row in elem.findall(".//row"):
         for entry in row.findall("entry"):
@@ -1169,6 +1167,35 @@ def row_effective_colcount(row, name_to_index):
     return sum(entry_colspan(entry, name_to_index) for entry in row.findall("entry"))
 
 
+def ordered_table_rows(elem):
+    tgroup = elem.find("tgroup")
+    if tgroup is None:
+        return []
+
+    rows = []
+    thead = tgroup.find("thead")
+    tbody = tgroup.find("tbody")
+    tfoot = tgroup.find("tfoot")
+
+    if thead is not None:
+        rows.extend(thead.findall("row"))
+    if tbody is not None:
+        rows.extend(tbody.findall("row"))
+    if tfoot is not None:
+        rows.extend(tfoot.findall("row"))
+    if not rows:
+        rows.extend(tgroup.findall("row"))
+
+    return rows
+
+
+def first_actual_table_row(elem):
+    for row in ordered_table_rows(elem):
+        if row.findall("entry"):
+            return row
+    return None
+
+
 def row_is_full_width_spanner(row, elem, name_to_index=None, total_columns=None):
     entries = row.findall("entry")
     if len(entries) != 1:
@@ -1196,12 +1223,10 @@ def extract_full_width_spanner_caption(elem, current_doc):
     if total_columns <= 1:
         return "", False
 
-    thead = elem.find(".//thead")
-    if thead is not None:
-        rows = thead.findall("row")
-        if rows and row_is_full_width_spanner(rows[0], elem, name_to_index, total_columns):
-            caption = " ".join(render_cell_paragraphs(rows[0].find("entry"), current_doc)).strip()
-            return caption, True
+    first_row = first_actual_table_row(elem)
+    if first_row is not None and row_is_full_width_spanner(first_row, elem, name_to_index, total_columns):
+        caption = " ".join(render_cell_paragraphs(first_row.find("entry"), current_doc)).strip()
+        return caption, True
 
     return "", False
 
@@ -1212,25 +1237,7 @@ def get_rows(elem, skip_first_full_width_spanner=False):
     name_to_index = colname_to_index_map(elem)
     total_columns = table_total_columns(elem)
 
-    tgroup = elem.find("tgroup")
-    if tgroup is None:
-        return rows
-
-    ordered_row_groups = []
-    thead = tgroup.find("thead")
-    tbody = tgroup.find("tbody")
-    tfoot = tgroup.find("tfoot")
-
-    if thead is not None:
-        ordered_row_groups.extend(thead.findall("row"))
-    if tbody is not None:
-        ordered_row_groups.extend(tbody.findall("row"))
-    if tfoot is not None:
-        ordered_row_groups.extend(tfoot.findall("row"))
-    if not ordered_row_groups:
-        ordered_row_groups.extend(tgroup.findall("row"))
-
-    for row in ordered_row_groups:
+    for row in ordered_table_rows(elem):
         cells = row.findall("entry")
         if not cells:
             continue
