@@ -1284,6 +1284,7 @@ def convert_simple_list_table(elem, current_doc, caption=""):
         return ""
 
     final_caption = spanner_caption or caption
+    final_caption = " ".join(final_caption.split()).strip()
 
     if final_caption:
         out = f"```{{list-table}} {final_caption}\n"
