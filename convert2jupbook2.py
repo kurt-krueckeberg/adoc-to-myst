@@ -1277,23 +1277,18 @@ def header_rows_from_table(elem, skip_first_full_width_spanner=False):
     return len(rows)
 
 
-def normalize_table_caption(text):
-    if not text:
-        return ""
-    return " ".join(text.split())
-
-
 def convert_simple_list_table(elem, current_doc, caption=""):
     spanner_caption, has_spanner_caption = extract_full_width_spanner_caption(elem, current_doc)
     rows = get_rows(elem, skip_first_full_width_spanner=has_spanner_caption)
     if not rows:
         return ""
 
-    final_caption = normalize_table_caption(spanner_caption or caption)
+    final_caption = spanner_caption or caption
 
-    out = "```{list-table}\n"
     if final_caption:
-        out += f":caption: {final_caption}\n"
+        out = f"```{{list-table}} {final_caption}\n"
+    else:
+        out = "```{list-table}\n"
 
     header_rows = header_rows_from_table(elem, skip_first_full_width_spanner=has_spanner_caption)
     if header_rows > 0:
