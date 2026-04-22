@@ -264,8 +264,7 @@ def convert_complex_table(elem, current_doc, caption):
     if caption:
         out += caption + "\n\n"
     out += "<!-- Raw HTML table included because the original AsciiDoc table contains row or column spans that MyST list-table cannot represent. -->\n\n"
-    out += "```{raw} html\n"
-    out += f"<div data-include-html=\"{html_escape_text(include_rel)}\"></div>\n"
+    out += f"```{{include}} {include_rel}\n"
     out += "```\n\n"
     return out
 
@@ -794,19 +793,35 @@ def render_inline(elem, current_doc):
     return out.strip() if elem.tag in ("para", "simpara") else out
 
 
+def normalize_table_cell_text(text):
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines)
+
+
 def render_cell_paragraphs(elem, current_doc):
     paras = []
 
     for child in elem:
         if child.tag in ("simpara", "para"):
-            text = render_inline(child, current_doc)
+            text = normalize_table_cell_text(render_inline(child, current_doc))
+            if text:
+                paras.append(text)
+        elif child.tag == "literallayout":
+            text = normalize_table_cell_text(render_literallayout_text(child, current_doc))
             if text:
                 paras.append(text)
 
     if paras:
         return paras
 
-    text = render_inline(elem, current_doc)
+    text = normalize_table_cell_text(render_inline(elem, current_doc))
     return [text] if text else [""]
 
 
@@ -1047,12 +1062,12 @@ def convert_image(elem, current_doc):
 
     if caption:
         out = f"```{{figure}} {src}\n"
-        out += ":class: antora-self-link\n\n"
+        out += ":class: image-override\n\n"
         out += caption + "\n"
         out += "```\n\n"
     else:
         out = f"```{{image}} {src}\n"
-        out += ":class: antora-self-link\n"
+        out += ":class: image-override\n"
         out += "```\n\n"
     return out
 
