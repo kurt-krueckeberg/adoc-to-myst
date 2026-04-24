@@ -889,10 +889,9 @@ def convert_sidebar(elem, current_doc):
 def convert_blockquote(elem, current_doc):
     parts = []
     attribution = elem.find("attribution")
+    attr_text = ""
     if attribution is not None:
         attr_text = render_inline(attribution, current_doc).strip()
-        if attr_text:
-            parts.append(f"-- {attr_text}")
 
     for child in elem:
         if child.tag == "attribution":
@@ -906,6 +905,9 @@ def convert_blockquote(elem, current_doc):
             if rendered:
                 parts.append(rendered)
 
+    if attr_text:
+        parts.append(f"--  {attr_text}")
+
     if not parts:
         return ""
 
@@ -917,7 +919,6 @@ def convert_blockquote(elem, current_doc):
             out += ">\n"
     out += "\n"
     return out
-
 
 def convert_variablelist(elem, current_doc):
     out = ""
