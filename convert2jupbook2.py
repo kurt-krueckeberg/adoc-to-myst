@@ -646,7 +646,7 @@ def render_link(elem, current_doc):
     if ulink is not None:
         url = ulink.attrib.get("url", "").strip()
         parsed = split_antora_target(url)
-        label = append_tail_to_link_label(link_label_from_ulink(ulink), elem.tail)
+        label = link_label_from_ulink(ulink)
 
         auto_label = (
             not label
@@ -737,20 +737,7 @@ def escape_markdown_link_text(text):
 
 
 def link_label_from_ulink(ulink):
-    label = "".join(ulink.itertext()).strip()
-    tail = (ulink.tail or "").strip()
-    if tail and tail != label:
-        label = (label + " " + tail).strip()
-    return label
-
-
-def append_tail_to_link_label(label, tail):
-    tail = (tail or "").strip()
-    if not tail or tail == label:
-        return label
-    if tail[0] in ".,;:!?)]":
-        return (label + tail).strip()
-    return (label + " " + tail).strip()
+    return "".join(ulink.itertext()).strip()
 
 
 def render_inline(elem, current_doc):
@@ -785,10 +772,7 @@ def render_inline(elem, current_doc):
             out += render_inline(child, current_doc)
 
         if child.tail:
-            if child.tag == "link" and child.tail.strip():
-                pass
-            else:
-                out += child.tail
+            out += child.tail
 
     return out.strip() if elem.tag in ("para", "simpara") else out
 
