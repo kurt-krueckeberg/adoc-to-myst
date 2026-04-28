@@ -152,215 +152,142 @@ def entry_rowspan(entry):
         return 1
 
 
-def html_attr_escape(text):
-    return html.escape(text or "", quote=True)
+def html_href_from_docbook_target(target, current_doc):
+    """Return an href suitable for raw HTML output.
 
-
-def normalize_docbook_html_href(target, current_doc):
-    """Normalize a DocBook link target for raw HTML output.
-
-    The normal MyST converter intentionally links to source .md files because
-    Sphinx/Jupyter Book resolves those during the build. Raw HTML table
-    fragments bypass MyST link resolution, so their href values must point to
-    the generated HTML pages instead.
+    The normal MyST renderer intentionally emits .md links because Sphinx/MyST
+    resolves them during the build. Raw HTML bypasses that resolver, so local
+    page links in raw HTML must point at the built .html files instead.
     """
-    return normalize_docbook_href_for_output(target, current_doc, page_ext=".html", external_as_html=True)
+    href = normalize_docbook_href(target, current_doc)
+
+    if not href:
+        return href
+    if "://" in href or href.startswith("#") or href.startswith("mailto:"):
+        return href
+
+    # Cross-component links may be returned as MyST roles by normalize_docbook_href.
+    # Raw HTML cannot contain MyST roles, so fall back to a harmless target.
+    if href.startswith("{external+"):
+        return "#"
+
+    path, sep, frag = href.partition("#")
+    if path.endswith(".md"):
+        path = path[:-3] + ".html"
+    return path + (sep + frag if sep else "")
 
 
-def normalize_docbook_href_for_output(target, current_doc, page_ext=".md", external_as_html=False):
-    target = (target or "").strip()
-    if not target:
-        return target
-
-    if "://" in target or target.startswith("#"):
-        return target
-
-    parsed = split_antora_target(target)
-    if not parsed:
-        return target
-
-    fragment = parsed.get("fragment", "")
-
-    if parsed["kind"] == "cross_component_page":
-        if not external_as_html:
-            return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"])
-        page_path = PurePosixPath(parsed["page"])
-        if page_path.suffix.lower() in (".xml", ".adoc", ".md", ".rst"):
-            page_path = page_path.with_suffix(page_ext)
-        elif page_path.suffix == "":
-            page_path = PurePosixPath(str(page_path) + page_ext)
-        return (PurePosixPath("..") / parsed["module"] / page_path).as_posix() + fragment
-
-    current_doc = PurePosixPath(current_doc)
-    source_root = current_doc.parent.parent
-
-    if parsed["kind"] == "same_component_page":
-        page_path = PurePosixPath(parsed["page"])
-        if page_path.suffix.lower() in (".xml", ".adoc", ".md", ".rst"):
-            page_path = page_path.with_suffix(page_ext)
-        elif page_path.suffix == "":
-            page_path = PurePosixPath(str(page_path) + page_ext)
-        target_path = source_root / parsed["module"] / page_path
-    else:
-        path = parsed.get("path")
-        if not path:
-            return fragment or target
-
-        p = PurePosixPath(path)
-        if p.suffix.lower() in (".xml", ".adoc", ".md", ".rst"):
-            p = p.with_suffix(page_ext)
-
-        if p.is_absolute():
-            target_path = p
-        elif len(p.parts) >= 2 and p.parts[0] != current_doc.parent.name:
-            target_path = source_root / p
-        else:
-            target_path = current_doc.parent / p
-
-    rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
-    return rel.replace("\\", "/") + fragment
+def render_inline_html_text(text):
+    return html.escape(text or "", quote=False)
 
 
-def render_html_xref(elem, current_doc):
-    target = (
-        elem.attrib.get("linkend", "").strip()
-        or elem.attrib.get("endterm", "").strip()
-    )
-    label = render_html_inline_children(elem, current_doc).strip()
-    if not target:
-        return label
-    href = normalize_docbook_html_href(target, current_doc)
-    if not label:
-        label = html_escape_text(fallback_label_from_target(target) or href)
-    return f'<a href="{html_attr_escape(href)}">{label}</a>'
+def render_html_anchor(href, label, external=False):
+    href = html.escape(href or "#", quote=True)
+    label = label or href
+    if external:
+        return f'<a class="reference external" href="{href}">{label}</a>'
+    return f'<a class="reference internal" href="{href}"><span class="std std-doc">{label}</span></a>'
 
 
-def render_html_link(elem, current_doc):
-    # Asciidoctor's DocBook 4 output may nest a ulink inside link and then
-    # repeat the link text as the ulink tail.  For HTML output, use the ulink
-    # once and deliberately ignore that duplicate tail.
+def render_link_html(elem, current_doc):
     ulink = elem.find("ulink")
     if ulink is not None:
-        return render_html_ulink(ulink, current_doc)
+        url = ulink.attrib.get("url", "").strip()
+        href = html_href_from_docbook_target(url, current_doc)
+        label = render_inline_html_text(link_label_from_ulink(ulink) or href)
+        return render_html_anchor(href, label, external=("://" in href))
 
     linkend = elem.attrib.get("linkend", "").strip()
-    label = render_html_inline_children(elem, current_doc).strip()
-    if not linkend:
-        return label
-    href = normalize_docbook_html_href(linkend, current_doc)
-    if not label:
-        label = html_escape_text(fallback_label_from_target(linkend) or href)
-    return f'<a href="{html_attr_escape(href)}">{label}</a>'
+    if linkend:
+        href = html_href_from_docbook_target(linkend, current_doc)
+        label = render_inline_html(elem, current_doc).strip()
+        if not label:
+            label = render_inline_html_text(fallback_label_from_target(linkend) or href)
+        return render_html_anchor(href, label, external=("://" in href))
+
+    return render_inline_html(elem, current_doc)
 
 
-def render_html_ulink(elem, current_doc):
-    url = elem.attrib.get("url", "").strip()
-    href = normalize_docbook_html_href(url, current_doc) if url else ""
-    label = render_html_inline_children(elem, current_doc).strip()
-    if not label:
-        label = html_escape_text(href or url)
-    if not href:
-        return label
-    return f'<a href="{html_attr_escape(href)}">{label}</a>'
+def render_inline_html(elem, current_doc):
+    """Render DocBook inline content as HTML, not Markdown/MyST."""
+    out = ""
 
+    if elem.text:
+        out += render_inline_html_text(elem.text)
 
-def render_html_inline_children(elem, current_doc):
-    out = html_escape_text(elem.text or "")
     for child in elem:
-        out += render_html_inline(child, current_doc)
+        if child.tag == "emphasis":
+            inner = render_inline_html(child, current_doc)
+            if child.attrib.get("role", "") == "strong":
+                out += f"<strong>{inner}</strong>"
+            else:
+                out += f"<em>{inner}</em>"
+
+        elif child.tag == "xref":
+            target = child.attrib.get("linkend", "").strip() or child.attrib.get("endterm", "").strip()
+            href = html_href_from_docbook_target(target, current_doc)
+            label = render_inline_html(child, current_doc).strip()
+            if not label or label == render_inline_html_text(target) or label.endswith(".xml"):
+                label = render_inline_html_text(fallback_label_from_target(target) or href)
+            out += render_html_anchor(href, label, external=("://" in href))
+
+        elif child.tag == "ulink":
+            url = child.attrib.get("url", "").strip()
+            href = html_href_from_docbook_target(url, current_doc)
+            label = render_inline_html(child, current_doc).strip() or render_inline_html_text(href)
+            out += render_html_anchor(href, label, external=("://" in href))
+
+        elif child.tag == "link":
+            out += render_link_html(child, current_doc)
+
+        elif child.tag == "phrase" and child.attrib.get("role", "") == "line-through":
+            out += f"<s>{render_inline_html(child, current_doc)}</s>"
+
+        else:
+            out += render_inline_html(child, current_doc)
+
         if child.tail:
-            out += html_escape_text(child.tail)
-    return out
+            out += render_inline_html_text(child.tail)
 
-
-def render_html_inline(elem, current_doc):
-    if elem.tag == "emphasis":
-        role = elem.attrib.get("role", "")
-        inner = render_html_inline_children(elem, current_doc)
-        if role == "strong":
-            return f"<strong>{inner}</strong>"
-        return f"<em>{inner}</em>"
-
-    if elem.tag == "xref":
-        return render_html_xref(elem, current_doc)
-
-    if elem.tag == "ulink":
-        return render_html_ulink(elem, current_doc)
-
-    if elem.tag == "link":
-        return render_html_link(elem, current_doc)
-
-    if elem.tag == "phrase":
-        role = elem.attrib.get("role", "")
-        inner = render_html_inline_children(elem, current_doc)
-        if role == "strong":
-            return f"<strong>{inner}</strong>"
-        if role in ("emphasis", "italic"):
-            return f"<em>{inner}</em>"
-        if role in ("line-through", "strikethrough", "strike"):
-            return f"<s>{inner}</s>"
-        return inner
-
-    return render_html_inline_children(elem, current_doc)
-
-
-def render_html_block(elem, current_doc):
-    if elem.tag in ("para", "simpara"):
-        body = render_html_inline_children(elem, current_doc).strip()
-        return f"<p>{body}</p>" if body else ""
-
-    if elem.tag == "literallayout":
-        text = render_literallayout_text(elem, current_doc)
-        return f"<pre>{html_escape_text(text)}</pre>" if text else ""
-
-    if elem.tag in ("itemizedlist", "orderedlist"):
-        list_tag = "ul" if elem.tag == "itemizedlist" else "ol"
-        items = []
-        for item in elem.findall("listitem"):
-            item_parts = []
-            for child in item:
-                block = render_html_block(child, current_doc)
-                if block:
-                    item_parts.append(block)
-            items.append(f"<li>{''.join(item_parts)}</li>")
-        return f"<{list_tag}>{''.join(items)}</{list_tag}>" if items else ""
-
-    body = render_html_inline(elem, current_doc).strip()
-    return body
+    return out.strip() if elem.tag in ("para", "simpara") else out
 
 
 def cell_html_contents(entry, current_doc):
     parts = []
-    if entry.text and entry.text.strip():
-        parts.append(html_escape_text(entry.text.strip()))
-
     for child in entry:
-        block = render_html_block(child, current_doc)
-        if block:
-            parts.append(block)
-        if child.tail and child.tail.strip():
-            parts.append(html_escape_text(child.tail.strip()))
+        if child.tag in ("para", "simpara"):
+            text = render_inline_html(child, current_doc).strip()
+            if text:
+                parts.append(f"<p>{text}</p>")
+        elif child.tag == "literallayout":
+            text = html.escape(render_literallayout_text(child, current_doc), quote=False)
+            if text:
+                parts.append(f"<pre>{text}</pre>")
 
     if parts:
         return "".join(parts)
 
-    text = render_html_inline(entry, current_doc).strip()
+    text = render_inline_html(entry, current_doc).strip()
     return text if text else ""
 
 
-def render_html_table_rows(parent, current_doc, name_to_index, cell_tag):
+def render_html_table_rows(parent, current_doc, name_to_index, cell_tag, row_start_index=0):
     if parent is None:
-        return ""
+        return "", row_start_index
 
     rows = parent.findall("row")
     if not rows:
-        return ""
+        return "", row_start_index
 
     out = []
+    row_index = row_start_index
     for row in rows:
-        out.append("  <tr>")
+        row_class = "row-odd" if row_index % 2 == 0 else "row-even"
+        out.append(f'  <tr class="{row_class}">')
         for entry in row.findall("entry"):
             attrs = []
+            if cell_tag == "th":
+                attrs.append(' class="head"')
             rowspan = entry_rowspan(entry)
             colspan = entry_colspan(entry, name_to_index)
             if rowspan > 1:
@@ -370,7 +297,9 @@ def render_html_table_rows(parent, current_doc, name_to_index, cell_tag):
             content = cell_html_contents(entry, current_doc)
             out.append(f"    <{cell_tag}{''.join(attrs)}>{content}</{cell_tag}>")
         out.append("  </tr>")
-    return "\n".join(out)
+        row_index += 1
+
+    return "\n".join(out), row_index
 
 
 def render_complex_html_table(elem, current_doc):
@@ -379,27 +308,33 @@ def render_complex_html_table(elem, current_doc):
     tbody = elem.find(".//tbody")
     tfoot = elem.find(".//tfoot")
 
-    parts = ["<table>"]
+    parts = [
+        '<div class="pst-scrollable-table-container" tabindex="-1">',
+        '<table class="table">',
+    ]
 
-    head_rows = render_html_table_rows(thead, current_doc, name_to_index, "th")
+    row_index = 0
+
+    head_rows, row_index = render_html_table_rows(thead, current_doc, name_to_index, "th", row_index)
     if head_rows:
         parts.append("  <thead>")
         parts.append(head_rows)
         parts.append("  </thead>")
 
-    body_rows = render_html_table_rows(tbody, current_doc, name_to_index, "td")
+    body_rows, row_index = render_html_table_rows(tbody, current_doc, name_to_index, "td", row_index)
     if body_rows:
         parts.append("  <tbody>")
         parts.append(body_rows)
         parts.append("  </tbody>")
 
-    foot_rows = render_html_table_rows(tfoot, current_doc, name_to_index, "td")
+    foot_rows, row_index = render_html_table_rows(tfoot, current_doc, name_to_index, "td", row_index)
     if foot_rows:
         parts.append("  <tfoot>")
         parts.append(foot_rows)
         parts.append("  </tfoot>")
 
     parts.append("</table>")
+    parts.append("</div>")
     return "\n".join(parts) + "\n"
 
 
@@ -602,7 +537,54 @@ def require_component_mapping_for_empty_cross_component_xref(target):
 
 
 def normalize_docbook_href(target, current_doc):
-    return normalize_docbook_href_for_output(target, current_doc, page_ext=".md", external_as_html=False)
+    target = (target or "").strip()
+    if not target:
+        return target
+
+    if "://" in target or target.startswith("#"):
+        return target
+
+    parsed = split_antora_target(target)
+    if not parsed:
+        return target
+
+    if parsed["kind"] == "cross_component_page":
+        return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"])
+
+    fragment = parsed.get("fragment", "")
+    current_doc = PurePosixPath(current_doc)
+    source_root = current_doc.parent.parent
+
+    if parsed["kind"] == "same_component_page":
+        page = parsed["page"]
+        if page.endswith(".xml"):
+            page = page[:-4] + ".md"
+        elif page.endswith(".adoc"):
+            page = page[:-5] + ".md"
+        elif PurePosixPath(page).suffix == "":
+            page = page + ".md"
+        target_path = source_root / parsed["module"] / page
+    else:
+        path = parsed.get("path")
+        if not path:
+            return fragment or target
+
+        if path.endswith(".xml"):
+            path = path[:-4] + ".md"
+        elif path.endswith(".adoc"):
+            path = path[:-5] + ".md"
+
+        p = PurePosixPath(path)
+        if p.is_absolute():
+            target_path = p
+        elif len(p.parts) >= 2 and p.parts[0] != current_doc.parent.name:
+            target_path = source_root / p
+        else:
+            target_path = current_doc.parent / p
+
+    rel = os.path.relpath(str(target_path), start=str(current_doc.parent))
+    return rel.replace("\\", "/") + fragment
+
 
 def fallback_label_from_target(target):
     target = (target or "").strip()
