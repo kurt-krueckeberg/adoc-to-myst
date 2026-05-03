@@ -1237,6 +1237,41 @@ def convert_image(elem, current_doc):
     return out
 
 
+def convert_inline_image_paragraph(elem, current_doc):
+    """Convert a paragraph that consists only of an inline image into a MyST image block.
+
+    Asciidoctor can emit `image:foo.jpg[link=self]` as a DocBook paragraph
+    containing a <link> wrapper around an <inlinemediaobject>. That is still an
+    image block for our output purposes, not a text link to `self`.
+    """
+    if (elem.text or "").strip():
+        return None
+
+    children = list(elem)
+    if len(children) != 1:
+        return None
+
+    child = children[0]
+    if (child.tail or "").strip():
+        return None
+
+    if child.tag not in ("link", "inlinemediaobject", "mediaobject"):
+        return None
+
+    img = child.find(".//imagedata")
+    if img is None:
+        return None
+
+    src = normalize_image_path(img.attrib.get("fileref", ""), current_doc)
+    if not src:
+        return None
+
+    out = f"```{{image}} {src}\n"
+    out += ":class: image-override\n"
+    out += "```\n\n"
+    return out
+
+
 def _first_listitem_text_node(item):
     for child in item:
         if child.tag in ("para", "simpara"):
@@ -1550,6 +1585,10 @@ def convert_element(elem, current_doc, level=1):
         return out
 
     if elem.tag in ("para", "simpara"):
+        inline_image = convert_inline_image_paragraph(elem, current_doc)
+        if inline_image is not None:
+            return out + inline_image
+
         literallayout = elem.find("literallayout")
         if literallayout is not None:
             return out + convert_element(literallayout, current_doc, level)

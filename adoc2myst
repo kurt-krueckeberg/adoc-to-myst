@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # adoc2myst: convert an Antora/AsciiDoc page to MyST Markdown via
-# Asciidoctor DocBook 5 -> DocBook 4 -> convert2jupbook2.py.
+# Asciidoctor DocBook 5 -> DocBook 4 -> convert2jupbook1.py.
 #
 # Usage:
 #   adoc2myst --modules-dir /path/to/modules \
@@ -175,7 +175,7 @@ if [[ -n "$COMPONENTS_FILE" ]]; then
   CONVERT_ARGS+=(--components-file "$COMPONENTS_FILE")
 fi
 
-python3 "$SCRIPT_DIR/convert2jupbook2.py" "${CONVERT_ARGS[@]}"
+python3 "$SCRIPT_DIR/convert2jupbook1.py" "${CONVERT_ARGS[@]}"
 
 echo "Done: $OUTPUT_MD"
 echo "Logical current document: $CURRENT_DOC"
