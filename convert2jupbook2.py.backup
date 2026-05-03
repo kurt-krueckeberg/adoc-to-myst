@@ -14,6 +14,7 @@ CURRENT_ADOC_SOURCE = None
 CURRENT_ADOC_TABLE_BLOCKS = []
 CURRENT_TABLE_INDEX = 0
 FULL_ADOC_PRESERVED = False
+CURRENT_INTERNAL_IDS = set()
 
 
 def die(msg):
@@ -66,7 +67,7 @@ def extract_asciidoc_table_blocks(path):
     return blocks
 
 def setup_output_artifact_context(current_doc, output_md_path):
-    global OUTPUT_MD_PATH, ARTIFACT_DIR, CURRENT_ADOC_SOURCE, CURRENT_ADOC_TABLE_BLOCKS, CURRENT_TABLE_INDEX, FULL_ADOC_PRESERVED
+    global OUTPUT_MD_PATH, ARTIFACT_DIR, CURRENT_ADOC_SOURCE, CURRENT_ADOC_TABLE_BLOCKS, CURRENT_TABLE_INDEX, FULL_ADOC_PRESERVED, CURRENT_INTERNAL_IDS
 
     OUTPUT_MD_PATH = Path(output_md_path).expanduser().resolve()
     ARTIFACT_DIR = None
@@ -74,6 +75,7 @@ def setup_output_artifact_context(current_doc, output_md_path):
     CURRENT_ADOC_TABLE_BLOCKS = []
     CURRENT_TABLE_INDEX = 0
     FULL_ADOC_PRESERVED = False
+    CURRENT_INTERNAL_IDS = set()
 
     if OUTPUT_MD_PATH is not None:
         ARTIFACT_DIR = OUTPUT_MD_PATH.parent / "_table-artifacts"
@@ -111,6 +113,23 @@ def write_complex_table_artifacts(index, html_text):
 
 def html_escape_text(text):
     return html.escape(text, quote=False)
+
+
+def elem_id(elem):
+    return (
+        elem.attrib.get("id", "").strip()
+        or elem.attrib.get("{http://www.w3.org/XML/1998/namespace}id", "").strip()
+    )
+
+
+def collect_internal_anchor_ids(root):
+    return {elem_id(elem) for elem in root.iter("anchor") if elem_id(elem)}
+
+
+def render_myst_ref(label, target):
+    label = escape_markdown_link_text(label or target)
+    target = (target or "").strip()
+    return f"{{ref}}`{label} <{target}>`"
 
 
 def colname_to_index_map(elem):
@@ -749,6 +768,10 @@ def render_xref(elem, current_doc):
     if not target:
         return ""
 
+    if target in CURRENT_INTERNAL_IDS:
+        label = render_inline(elem, current_doc).strip() or target
+        return render_myst_ref(label, target)
+
     label = render_inline(elem, current_doc).strip()
 
     auto_label = (
@@ -836,6 +859,10 @@ def render_link(elem, current_doc):
 
     linkend = elem.attrib.get("linkend", "").strip()
     if linkend:
+        if linkend in CURRENT_INTERNAL_IDS:
+            label = render_inline(elem, current_doc).strip() or linkend
+            return render_myst_ref(label, linkend)
+
         parsed = split_antora_target(linkend)
         label = render_inline(elem, current_doc).strip()
 
@@ -916,6 +943,11 @@ def render_inline(elem, current_doc):
 
         elif child.tag == "link":
             out += render_link(child, current_doc)
+
+        elif child.tag == "anchor":
+            anchor = convert_anchor(child)
+            if anchor:
+                out += anchor + "\n\n"
 
         else:
             out += render_inline(child, current_doc)
@@ -1101,7 +1133,7 @@ def convert_variablelist(elem, current_doc):
 
 
 def convert_anchor(elem):
-    anchor_id = elem.attrib.get("id", "").strip()
+    anchor_id = elem_id(elem)
     if not anchor_id:
         return ""
     return f"({anchor_id})="
@@ -1578,8 +1610,11 @@ def parse_docbook_root(doc):
 
 
 def convert(doc, current_doc, output_md_path):
+    global CURRENT_INTERNAL_IDS
+
     setup_output_artifact_context(current_doc, output_md_path)
     root = parse_docbook_root(doc)
+    CURRENT_INTERNAL_IDS = collect_internal_anchor_ids(root)
     out = ""
 
     title_parent = root if root.find("title") is not None else None
