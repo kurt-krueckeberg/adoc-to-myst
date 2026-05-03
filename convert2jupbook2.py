@@ -1,8 +1,8 @@
 import xml.etree.ElementTree as ET
 import re
 import os
-import shutil
 import html
+import shutil
 from pathlib import PurePosixPath, Path
 
 COMPONENT_ROOTS = {}
@@ -102,19 +102,10 @@ def write_complex_table_artifacts(index, html_text):
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
-    preserve_full_asciidoc_source()
-
     basename = current_table_basename(index)
 
     html_path = ARTIFACT_DIR / f"{basename}.html"
     html_path.write_text(html_text, encoding="utf-8")
-
-    source_path = ARTIFACT_DIR / f"{basename}.source.adoc"
-    if 1 <= index <= len(CURRENT_ADOC_TABLE_BLOCKS):
-        source_text = CURRENT_ADOC_TABLE_BLOCKS[index - 1]
-    else:
-        source_text = "// Original AsciiDoc table block could not be extracted reliably.\n"
-    source_path.write_text(source_text, encoding="utf-8")
 
     return html_path
 
@@ -271,19 +262,20 @@ def cell_html_contents(entry, current_doc):
     return text if text else ""
 
 
-def render_html_table_rows(parent, current_doc, name_to_index, cell_tag, row_start_index=0):
+def render_html_table_rows(parent, current_doc, name_to_index, cell_tag):
     if parent is None:
-        return "", row_start_index
+        return ""
 
     rows = parent.findall("row")
     if not rows:
-        return "", row_start_index
+        return ""
 
     out = []
-    row_index = row_start_index
     for row in rows:
-        row_class = "row-odd" if row_index % 2 == 0 else "row-even"
-        out.append(f'  <tr class="{row_class}">')
+        # Do not emit row-odd/row-even classes for raw HTML fallback tables.
+        # Zebra striping is misleading when cells use rowspan, because a spanning
+        # cell visually crosses rows with different background colors.
+        out.append("  <tr>")
         for entry in row.findall("entry"):
             attrs = []
             if cell_tag == "th":
@@ -297,9 +289,8 @@ def render_html_table_rows(parent, current_doc, name_to_index, cell_tag, row_sta
             content = cell_html_contents(entry, current_doc)
             out.append(f"    <{cell_tag}{''.join(attrs)}>{content}</{cell_tag}>")
         out.append("  </tr>")
-        row_index += 1
 
-    return "\n".join(out), row_index
+    return "\n".join(out)
 
 
 def render_complex_html_table(elem, current_doc):
@@ -308,26 +299,37 @@ def render_complex_html_table(elem, current_doc):
     tbody = elem.find(".//tbody")
     tfoot = elem.find(".//tfoot")
 
+    # JB1/Sphinx themes may zebra-stripe rows with CSS nth-child selectors,
+    # even when row-odd/row-even classes are absent. Raw fallback tables may
+    # contain rowspan cells, so striping is visually misleading. Add a scoped
+    # class plus a scoped CSS override inside the artifact itself.
     parts = [
+        '<style>',
+        '.no-zebra-rowspan-table tbody tr,',
+        '.no-zebra-rowspan-table tbody tr:nth-child(odd),',
+        '.no-zebra-rowspan-table tbody tr:nth-child(even),',
+        '.no-zebra-rowspan-table tbody td,',
+        '.no-zebra-rowspan-table tbody th {',
+        '  background-color: transparent !important;',
+        '}',
+        '</style>',
         '<div class="pst-scrollable-table-container" tabindex="-1">',
-        '<table class="table">',
+        '<table class="table no-zebra-rowspan-table">',
     ]
 
-    row_index = 0
-
-    head_rows, row_index = render_html_table_rows(thead, current_doc, name_to_index, "th", row_index)
+    head_rows = render_html_table_rows(thead, current_doc, name_to_index, "th")
     if head_rows:
         parts.append("  <thead>")
         parts.append(head_rows)
         parts.append("  </thead>")
 
-    body_rows, row_index = render_html_table_rows(tbody, current_doc, name_to_index, "td", row_index)
+    body_rows = render_html_table_rows(tbody, current_doc, name_to_index, "td")
     if body_rows:
         parts.append("  <tbody>")
         parts.append(body_rows)
         parts.append("  </tbody>")
 
-    foot_rows, row_index = render_html_table_rows(tfoot, current_doc, name_to_index, "td", row_index)
+    foot_rows = render_html_table_rows(tfoot, current_doc, name_to_index, "td")
     if foot_rows:
         parts.append("  <tfoot>")
         parts.append(foot_rows)
@@ -371,16 +373,21 @@ def convert_complex_table(elem, current_doc, caption):
     CURRENT_TABLE_INDEX += 1
 
     html_text = render_complex_html_table(elem, current_doc)
-    html_path = write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
 
-    include_name = html_path.name if html_path is not None else f"{current_table_basename(CURRENT_TABLE_INDEX)}.html"
-    include_rel = f"_table-artifacts/{include_name}"
+    # Still write the artifact for inspection/debugging, but do not include it
+    # as Markdown source. MyST's include directive parses the included file as
+    # Markdown, and raw HTML tables with rowspan/colspan can then be misparsed
+    # or visibly leaked into the rendered table. Emitting the table through a
+    # raw HTML directive keeps the table as HTML and preserves all seven
+    # columns, row spans, column spans, and links.
+    write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
 
     out = ""
     if caption:
         out += caption + "\n\n"
-    out += "<!-- Raw HTML table included because the original AsciiDoc table contains row or column spans that MyST list-table cannot represent. -->\n\n"
-    out += f"```{{include}} {include_rel}\n"
+    out += "<!-- Raw HTML table emitted because the original AsciiDoc table contains row or column spans that MyST list-table cannot represent. -->\n\n"
+    out += "```{raw} html\n"
+    out += html_text.rstrip() + "\n"
     out += "```\n\n"
     return out
 
@@ -1545,11 +1552,8 @@ def convert_element(elem, current_doc, level=1):
         return out + convert_admonition(elem, current_doc)
     if elem.tag == "literallayout":
         text = render_literallayout_text(elem, current_doc)
-        role = elem.attrib.get("role", "").strip()
 
         out += "```{code-block} text\n"
-        if role:
-            out += f":class: {role}\n"
         out += "\n"
         out += text.rstrip("\n")
         out += "\n```\n\n"
@@ -1560,9 +1564,22 @@ def convert_element(elem, current_doc, level=1):
     return out
 
 
+def parse_docbook_root(doc):
+    """Parse DocBook XML without resolving or fetching the external DTD.
+
+    Some DocBook files contain a PUBLIC/SYSTEM doctype that points to an
+    internet URL. The converter only needs the document tree, not validation, so
+    strip the doctype before parsing. This avoids stalls or failures on machines
+    without network access.
+    """
+    text = Path(doc).read_text(encoding="utf-8")
+    text = re.sub(r'<!DOCTYPE[^>]*(?:\[[\s\S]*?\]\s*)?>\s*', '', text, count=1)
+    return ET.fromstring(text)
+
+
 def convert(doc, current_doc, output_md_path):
     setup_output_artifact_context(current_doc, output_md_path)
-    root = ET.parse(doc).getroot()
+    root = parse_docbook_root(doc)
     out = ""
 
     title_parent = root if root.find("title") is not None else None
