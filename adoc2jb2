@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+# adoc2myst: convert an Antora/AsciiDoc page to MyST Markdown via
+# Asciidoctor DocBook 5 -> DocBook 4 -> convert2jupbook2.py.
+#
+# Usage:
+#   adoc2myst --modules-dir /path/to/modules \
+#             [--components-file /path/to/components.yml] \
+#             [--doc4-dir /path/to/folder] \
+#             [-o output.md] \
+#             <input.adoc>
+
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  SCRIPT_DIR="$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$SCRIPT_DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
+
+OUTPUT_OVERRIDE=""
+DOC4_DIR_OVERRIDE=""
+MODULES_DIR=""
+COMPONENTS_FILE=""
+INPUT=""
+DEBUG="${DEBUG:-0}"
+
+usage() {
+  echo "Usage: $0 --modules-dir /path/to/modules [--components-file /path/to/components.yml] [-o output.md] [--doc4-dir /path/to/folder] <input.adoc>"
+}
+
+compute_current_doc() {
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+input_path = Path(sys.argv[1]).expanduser().resolve()
+modules_dir = Path(sys.argv[2]).expanduser().resolve()
+
+def as_md(module, rel_parts):
+    rel = Path(*rel_parts)
+    return (Path(module) / rel).with_suffix('.md').as_posix()
+
+try:
+    rel = input_path.relative_to(modules_dir)
+    if len(rel.parts) >= 3 and rel.parts[1] == 'pages':
+        print(as_md(rel.parts[0], rel.parts[2:]))
+        raise SystemExit(0)
+except ValueError:
+    pass
+
+parts = input_path.parts
+for i in range(len(parts) - 2):
+    if parts[i] == 'm' and i + 2 < len(parts) and parts[i + 2] == 'p':
+        module = parts[i + 1]
+        rel_parts = parts[i + 3:]
+        if rel_parts:
+            print(as_md(module, rel_parts))
+            raise SystemExit(0)
+
+for i in range(len(parts) - 2):
+    if parts[i] == 'modules' and i + 2 < len(parts) and parts[i + 2] == 'pages':
+        module = parts[i + 1]
+        rel_parts = parts[i + 3:]
+        if rel_parts:
+            print(as_md(module, rel_parts))
+            raise SystemExit(0)
+
+raise SystemExit(
+    f"Error: could not infer the document's logical Antora path from input file: {input_path}\n"
+    "Place the input under <modules>/<module>/pages/... or under a path segment matching m/<module>/p/..."
+)
+PY
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      OUTPUT_OVERRIDE="$2"
+      shift 2
+      ;;
+    --doc4-dir)
+      DOC4_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    --modules-dir)
+      MODULES_DIR="$2"
+      shift 2
+      ;;
+    --components-file)
+      COMPONENTS_FILE="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      usage
+      exit 1
+      ;;
+    *)
+      INPUT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$INPUT" || -z "$MODULES_DIR" ]]; then
+  usage
+  exit 1
+fi
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "Error: file not found: $INPUT"
+  exit 1
+fi
+
+if [[ ! -d "$MODULES_DIR" ]]; then
+  echo "Error: modules directory not found: $MODULES_DIR"
+  exit 1
+fi
+
+if [[ -n "$COMPONENTS_FILE" && ! -f "$COMPONENTS_FILE" ]]; then
+  echo "Error: components file not found: $COMPONENTS_FILE"
+  exit 1
+fi
+
+MODULES_DIR="$(cd "$MODULES_DIR" && pwd)"
+BASENAME="$(basename "$INPUT" .adoc)"
+CURRENT_DOC="$(compute_current_doc "$INPUT" "$MODULES_DIR")"
+TMPDIR="$(mktemp -d)"
+
+if [[ "$DEBUG" -eq 1 ]]; then
+  echo "DEBUG: using temp dir: $TMPDIR"
+else
+  trap 'rm -rf "$TMPDIR"' EXIT
+fi
+
+if [[ -n "$DOC4_DIR_OVERRIDE" ]]; then
+  mkdir -p "$DOC4_DIR_OVERRIDE"
+  XML_WORK_DIR="$DOC4_DIR_OVERRIDE"
+else
+  XML_WORK_DIR="$TMPDIR"
+fi
+
+DOC5="$XML_WORK_DIR/doc5.xml"
+DOC5_NONS="$XML_WORK_DIR/doc5-nons.xml"
+DOC4="$XML_WORK_DIR/doc4.xml"
+
+if [[ -n "$OUTPUT_OVERRIDE" ]]; then
+  OUTPUT_MD="$OUTPUT_OVERRIDE"
+else
+  OUTPUT_MD="$(dirname "$INPUT")/${BASENAME}.md"
+fi
+
+mkdir -p "$(dirname "$OUTPUT_MD")"
+
+DBCOOKBOOK_DIR="${DBCOOKBOOK_DIR:-$REPO_ROOT/dbcookbook}"
+XSL_DIR="$DBCOOKBOOK_DIR/en/xml/structure/db5-to-db4"
+XSL_FILE="$XSL_DIR/db5to4.xsl"
+
+if [[ ! -f "$XSL_FILE" ]]; then
+  echo "Error: db5to4.xsl not found at: $XSL_FILE"
+  echo "Set DBCOOKBOOK_DIR to the correct location."
+  exit 1
+fi
+
+asciidoctor -b docbook "$INPUT" -o "$DOC5"
+sed 's/xmlns="http:\/\/docbook.org\/ns\/docbook"//' "$DOC5" > "$DOC5_NONS"
+xsltproc --path "$XSL_DIR" "$XSL_FILE" "$DOC5_NONS" > "$DOC4"
+
+CONVERT_ARGS=(-o "$OUTPUT_MD" "$DOC4" "$CURRENT_DOC" "$MODULES_DIR")
+if [[ -n "$COMPONENTS_FILE" ]]; then
+  CONVERT_ARGS+=(--components-file "$COMPONENTS_FILE")
+fi
+
+python3 "$SCRIPT_DIR/convert2jupbook2.py" "${CONVERT_ARGS[@]}"
+
+echo "Done: $OUTPUT_MD"
+echo "Logical current document: $CURRENT_DOC"
+echo "DocBook 5 file: $DOC5"
+echo "Namespace-stripped DocBook 5 file: $DOC5_NONS"
+echo "DocBook 4 file: $DOC4"
