@@ -139,6 +139,19 @@ def render_myst_ref(label, target):
     return f"[{label}](#{target})"
 
 
+def is_external_href(value):
+    value = (value or "").strip()
+    return "://" in value or value.startswith("mailto:")
+
+
+def xlink_href(elem):
+    return (
+        elem.attrib.get("href", "").strip()
+        or elem.attrib.get("url", "").strip()
+        or elem.attrib.get("{http://www.w3.org/1999/xlink}href", "").strip()
+    )
+
+
 def inline_anchor_targets(elem):
     """Return MyST target blocks for anchors embedded inside an inline container.
 
@@ -153,6 +166,70 @@ def inline_anchor_targets(elem):
         if rendered:
             targets.append(rendered)
     return targets
+
+
+def render_bibliomisc_inline(elem, current_doc):
+    """Render a bibliography text node without placing anchors inline.
+
+    In Asciidoctor's DocBook output, a citation like `[[[id]]]` may appear as
+    text `[` + <anchor id="id"/> + `]`.  The MyST target `(id)=` is block-level
+    syntax, so it is emitted separately by convert_bibliomixed(); this renderer
+    preserves the visible `[id]` label in the citation text.
+
+    For Archion citations, older output linked the URL plus the rest of the
+    citation text.  Preserve that shape while keeping the separate MyST target,
+    e.g. `[https://... : date), path: ...](https://...)`.
+    """
+    out = elem.text or ""
+
+    for child in elem:
+        child_tail = child.tail or ""
+
+        if child.tag == "anchor":
+            anchor_id = elem_id(child)
+            if anchor_id and out.endswith("[") and child_tail.startswith("]"):
+                out = out[:-1] + f"[{anchor_id}]"
+                child_tail = child_tail[1:]
+            out += child_tail
+            continue
+
+        if child.tag == "emphasis":
+            role = child.attrib.get("role", "")
+            inner = render_inline(child, current_doc)
+            out += f"**{inner}**" if role == "strong" else f"*{inner}*"
+            out += child_tail
+            continue
+
+        if child.tag == "link":
+            ulink = child.find("ulink")
+            direct_href = xlink_href(child)
+            url = ""
+            label = ""
+            if ulink is not None:
+                url = ulink.attrib.get("url", "").strip()
+                label = render_inline(ulink, current_doc).strip() or url
+            elif direct_href and is_external_href(direct_href):
+                url = direct_href
+                label = render_inline(child, current_doc).strip() or url
+
+            if url and is_external_href(url):
+                href = normalize_docbook_href(url, current_doc)
+                link_text = escape_markdown_link_text((label or href) + child_tail)
+                out += f"[{link_text}]({href})"
+                continue
+
+        if child.tag == "ulink":
+            raw_url = child.attrib.get("url", "").strip()
+            url = normalize_docbook_href(raw_url, current_doc)
+            label = render_inline(child, current_doc).strip() or raw_url or url
+            link_text = escape_markdown_link_text(label + child_tail)
+            out += f"[{link_text}]({url})"
+            continue
+
+        out += render_inline(child, current_doc)
+        out += child_tail
+
+    return out.strip() if elem.tag in ("para", "simpara", "bibliomisc") else out
 
 
 def colname_to_index_map(elem):
@@ -837,46 +914,23 @@ def render_xref(elem, current_doc):
 
 
 def render_link(elem, current_doc):
+    # DocBook 4 often represents AsciiDoc URLs as:
+    # <link><ulink url="https://...">https://...</ulink>https://...</link>.
+    # Treat the nested ulink URL as an ordinary external Markdown link.  Do not
+    # run external URLs through Antora target parsing/fallback labeling; doing so
+    # corrupts labels such as https://... into bogus values like https:.md.
     ulink = elem.find("ulink")
     if ulink is not None:
         url = ulink.attrib.get("url", "").strip()
-        parsed = split_antora_target(url)
-        label = link_label_from_ulink(ulink)
-
-        auto_label = (
-            not label
-            or label == url
-            or label == os.path.basename(url)
-            or label.endswith(".xml")
-        )
-
-        if parsed and parsed["kind"] == "cross_component_page":
-            if auto_label:
-                require_component_mapping_for_empty_cross_component_xref(url)
-                src = adoc_source_from_target(url, current_doc)
-                if src:
-                    title = extract_adoc_title(src)
-                    if title:
-                        label = title
-                    else:
-                        label = fallback_label_from_target(url)
-                else:
-                    label = fallback_label_from_target(url)
-            return myst_external_doc_role(parsed["component"], parsed["module"], parsed["page"], label or None)
-
         href = normalize_docbook_href(url, current_doc)
+        label = render_inline(ulink, current_doc).strip() or url or href
+        label = escape_markdown_link_text(label)
+        return f"[{label or href}]({href})"
 
-        if auto_label and (":" in url or url.endswith(".xml") or url.endswith(".adoc") or url.endswith(".md")):
-            src = adoc_source_from_target(url, current_doc)
-            if src:
-                title = extract_adoc_title(src)
-                if title:
-                    label = title
-                else:
-                    label = fallback_label_from_target(url)
-            else:
-                label = fallback_label_from_target(url)
-
+    direct_href = xlink_href(elem)
+    if direct_href and is_external_href(direct_href):
+        href = normalize_docbook_href(direct_href, current_doc)
+        label = render_inline(elem, current_doc).strip() or direct_href
         label = escape_markdown_link_text(label)
         return f"[{label or href}]({href})"
 
@@ -958,9 +1012,9 @@ def render_inline(elem, current_doc):
             out += render_xref(child, current_doc)
 
         elif child.tag == "ulink":
-            url = child.attrib.get("url", "")
-            url = normalize_docbook_href(url, current_doc)
-            label = render_inline(child, current_doc) or url
+            raw_url = child.attrib.get("url", "").strip()
+            url = normalize_docbook_href(raw_url, current_doc)
+            label = render_inline(child, current_doc) or raw_url or url
             label = escape_markdown_link_text(label)
             out += f"[{label}]({url})"
 
@@ -1195,7 +1249,7 @@ def convert_bibliomixed(elem, current_doc):
         elif child.tag in ("bibliomisc", "simpara", "para"):
             for target in inline_anchor_targets(child):
                 parts.append(target)
-            text = render_inline(child, current_doc).strip()
+            text = render_bibliomisc_inline(child, current_doc).strip()
             if text:
                 parts.append(text)
         else:
@@ -1287,9 +1341,14 @@ def _convert_list(elem, current_doc, marker_func, indent=0):
         line_prefix = " " * indent + marker + " "
 
         if text_node is not None:
-            for target in inline_anchor_targets(text_node):
+            targets = inline_anchor_targets(text_node)
+            for target in targets:
                 out += target + "\n\n"
-            out += f"{line_prefix}{render_inline(text_node, current_doc)}\n"
+            text = (
+                render_bibliomisc_inline(text_node, current_doc)
+                if targets else render_inline(text_node, current_doc)
+            )
+            out += f"{line_prefix}{text}\n"
         else:
             out += f"{line_prefix}\n"
 
@@ -1301,7 +1360,13 @@ def _convert_list(elem, current_doc, marker_func, indent=0):
             elif child.tag == "orderedlist":
                 out += _convert_list(child, current_doc, lambda n: f"{n}.", indent + 2)
             elif child.tag in ("para", "simpara"):
-                text = render_inline(child, current_doc).strip()
+                targets = inline_anchor_targets(child)
+                for target in targets:
+                    out += " " * (indent + 2) + target + "\n\n"
+                text = (
+                    render_bibliomisc_inline(child, current_doc)
+                    if targets else render_inline(child, current_doc)
+                ).strip()
                 if text:
                     out += " " * (indent + 2) + text + "\n"
             else:
