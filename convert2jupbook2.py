@@ -263,11 +263,14 @@ def entry_rowspan(entry):
 
 
 def html_href_from_docbook_target(target, current_doc):
-    """Return an href suitable for raw HTML output.
+    """Return an href suitable for raw HTML table artifacts.
 
-    The normal MyST renderer intentionally emits .md links because Sphinx/MyST
-    resolves them during the build. Raw HTML bypasses that resolver, so local
-    page links in raw HTML must point at the built .html files instead.
+    Normal Markdown links can stay as .md because MyST/Jupyter Book resolves
+    them during the build. Links inside the _table-artifacts/*.html partials are
+    raw HTML, so they bypass that resolver. For Jupyter Book 2/MyST Document
+    Engine HTML output, local document URLs are extensionless, so a DocBook
+    target such as doc1.xml/adoc/md must become href="doc1", not
+    href="doc1.html".
     """
     href = normalize_docbook_href(target, current_doc)
 
@@ -283,7 +286,9 @@ def html_href_from_docbook_target(target, current_doc):
 
     path, sep, frag = href.partition("#")
     if path.endswith(".md"):
-        path = path[:-3] + ".html"
+        path = path[:-3]
+    elif path.endswith(".html"):
+        path = path[:-5]
     return path + (sep + frag if sep else "")
 
 
@@ -418,12 +423,22 @@ def render_complex_html_table(elem, current_doc):
     tbody = elem.find(".//tbody")
     tfoot = elem.find(".//tfoot")
 
-    # JB1/Sphinx themes may zebra-stripe rows with CSS nth-child selectors,
-    # even when row-odd/row-even classes are absent. Raw fallback tables may
-    # contain rowspan cells, so striping is visually misleading. Add a scoped
-    # class plus a scoped CSS override inside the artifact itself.
+    # PyData/Bootstrap table styling can apply both zebra striping and hover
+    # highlighting through Bootstrap table CSS variables and an inset
+    # box-shadow on the actual th/td cells, not only through background-color
+    # on the tr.  For rowspan/colspan fallback tables, suppress all of those
+    # row-state styles so a row-spanning cell is not visually misleading.
     parts = [
         '<style>',
+        '.no-zebra-rowspan-table {',
+        '  --bs-table-bg: transparent !important;',
+        '  --bs-table-accent-bg: transparent !important;',
+        '  --bs-table-striped-bg: transparent !important;',
+        '  --bs-table-active-bg: transparent !important;',
+        '  --bs-table-hover-bg: transparent !important;',
+        '  --bs-table-bg-type: transparent !important;',
+        '  --bs-table-bg-state: transparent !important;',
+        '}',
         '.no-zebra-rowspan-table,',
         '.no-zebra-rowspan-table thead,',
         '.no-zebra-rowspan-table tbody,',
@@ -431,27 +446,45 @@ def render_complex_html_table(elem, current_doc):
         '.no-zebra-rowspan-table tr:nth-child(odd),',
         '.no-zebra-rowspan-table tr:nth-child(even),',
         '.no-zebra-rowspan-table tr:hover,',
-        '.no-zebra-rowspan-table tr:hover > th,',
-        '.no-zebra-rowspan-table tr:hover > td,',
         '.no-zebra-rowspan-table tbody tr,',
         '.no-zebra-rowspan-table tbody tr:nth-child(odd),',
         '.no-zebra-rowspan-table tbody tr:nth-child(even),',
-        '.no-zebra-rowspan-table tbody tr:hover,',
-        '.no-zebra-rowspan-table tbody tr:hover > th,',
-        '.no-zebra-rowspan-table tbody tr:hover > td,',
+        '.no-zebra-rowspan-table tbody tr:hover {',
+        '  --bs-table-bg: transparent !important;',
+        '  --bs-table-accent-bg: transparent !important;',
+        '  --bs-table-striped-bg: transparent !important;',
+        '  --bs-table-active-bg: transparent !important;',
+        '  --bs-table-hover-bg: transparent !important;',
+        '  --bs-table-bg-type: transparent !important;',
+        '  --bs-table-bg-state: transparent !important;',
+        '  background: transparent !important;',
+        '  background-color: transparent !important;',
+        '}',
         '.no-zebra-rowspan-table th,',
         '.no-zebra-rowspan-table td,',
         '.no-zebra-rowspan-table tbody th,',
         '.no-zebra-rowspan-table tbody td,',
-        '.no-zebra-rowspan-table.table-hover tbody tr:hover,',
+        '.no-zebra-rowspan-table > :not(caption) > * > *,',
+        '.no-zebra-rowspan-table.table > :not(caption) > * > *,',
+        '.pst-scrollable-table-container .no-zebra-rowspan-table.table > :not(caption) > * > *,',
+        '.no-zebra-rowspan-table tr:hover > th,',
+        '.no-zebra-rowspan-table tr:hover > td,',
+        '.no-zebra-rowspan-table tbody tr:hover > th,',
+        '.no-zebra-rowspan-table tbody tr:hover > td,',
         '.no-zebra-rowspan-table.table-hover tbody tr:hover > th,',
-        '.no-zebra-rowspan-table.table-hover tbody tr:hover > td {',
+        '.no-zebra-rowspan-table.table-hover tbody tr:hover > td,',
+        '.no-zebra-rowspan-table.table-hover > tbody > tr:hover > * {',
         '  --bs-table-bg: transparent !important;',
         '  --bs-table-accent-bg: transparent !important;',
+        '  --bs-table-striped-bg: transparent !important;',
+        '  --bs-table-active-bg: transparent !important;',
         '  --bs-table-hover-bg: transparent !important;',
         '  --bs-table-hover-color: inherit !important;',
+        '  --bs-table-bg-type: transparent !important;',
+        '  --bs-table-bg-state: transparent !important;',
         '  background: transparent !important;',
         '  background-color: transparent !important;',
+        '  box-shadow: none !important;',
         '}',
         '</style>',
         '<div class="pst-scrollable-table-container" tabindex="-1">',

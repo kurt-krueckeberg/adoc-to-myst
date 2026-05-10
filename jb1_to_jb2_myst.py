@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper for jb1_to_jb2_myst.py
+#
+# Suggested install:
+#   chmod +x jb1tojb2
+#   sudo ln -s "$PWD/jb1tojb2" /usr/local/bin/jb1tojb2
+#
+# This wrapper expects the converter here:
+#   ~/adoc-t-myst/jb1_to_jb2_myst.py
+#
+# You may override that path with:
+#   JB1_TO_JB2_SCRIPT=/path/to/jb1_to_jb2_myst.py jb1tojb2 ...
+
+DEFAULT_CONVERTER="$HOME/adoc-t-myst/jb1_to_jb2_myst.py"
+
+if [[ -n "${JB1_TO_JB2_SCRIPT:-}" ]]; then
+  CONVERTER="$JB1_TO_JB2_SCRIPT"
+else
+  CONVERTER="$DEFAULT_CONVERTER"
+fi
+
+if [[ ! -f "$CONVERTER" ]]; then
+  echo "Error: converter script not found: $CONVERTER" >&2
+  echo "Set JB1_TO_JB2_SCRIPT=/path/to/jb1_to_jb2_myst.py if it is elsewhere." >&2
+  exit 1
+fi
+
+usage() {
+  cat <<'EOF'
+Usage:
+  jb1tojb2 SRC DST [options]
+  jb1tojb2 SRC --in-place [options]
+
+Common examples:
+  jb1tojb2 ~/sphinx-nla ~/jupyter-nla
+  jb1tojb2 ~/sphinx-nla ~/jupyter-nla --folder-links
+  jb1tojb2 ~/sphinx-nla ~/jupyter-nla --folder-links --dry-run
+  jb1tojb2 ~/sphinx-nla --in-place --backup --folder-links
+
+Defaults added by this wrapper:
+  --recursive
+
+Options passed through to jb1_to_jb2_myst.py:
+  --folder-links
+  --html-links
+  --in-place
+  --backup
+  --dry-run
+  --keep-sphinx-design
+
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+python3 "$CONVERTER" "$@" --recursive
