@@ -1,68 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Wrapper for jb1_to_jb2_myst.py
+# Simple wrapper for jb1_to_jb2_myst.py
 #
-# Suggested install:
-#   chmod +x jb1tojb2
-#   sudo ln -s "$PWD/jb1tojb2" /usr/local/bin/jb1tojb2
+# Normal use:
+#   jb1tojb2 SOURCE_DIR DEST_DIR
 #
-# This wrapper expects the converter here:
-#   ~/adoc-t-myst/jb1_to_jb2_myst.py
+# Example:
+#   jb1tojb2 ~/sphinx-nla ~/jupyter-nla
 #
-# You may override that path with:
-#   JB1_TO_JB2_SCRIPT=/path/to/jb1_to_jb2_myst.py jb1tojb2 ...
+# What it does:
+#   - recursively converts .md files from SOURCE_DIR
+#   - writes converted files to DEST_DIR
+#   - rewrites local .md links to JB2 folder-style links
+#
+# It runs this converter:
+#   ~/adoc-to-myst/jb1_to_jb2_myst.py
 
-DEFAULT_CONVERTER="$HOME/adoc-to-myst/jb1_to_jb2_myst.py"
-
-if [[ -n "${JB1_TO_JB2_SCRIPT:-}" ]]; then
-  CONVERTER="$JB1_TO_JB2_SCRIPT"
-else
-  CONVERTER="$DEFAULT_CONVERTER"
-fi
-
-if [[ ! -f "$CONVERTER" ]]; then
-  echo "Error: converter script not found: $CONVERTER" >&2
-  echo "Set JB1_TO_JB2_SCRIPT=/path/to/jb1_to_jb2_myst.py if it is elsewhere." >&2
-  exit 1
-fi
+CONVERTER="$HOME/adoc-to-myst/jb1_to_jb2_myst.py"
 
 usage() {
   cat <<'EOF'
 Usage:
-  jb1tojb2 SRC DST [options]
-  jb1tojb2 SRC --in-place [options]
+  jb1tojb2 SOURCE_DIR DEST_DIR
 
-Common examples:
+Example:
   jb1tojb2 ~/sphinx-nla ~/jupyter-nla
-  jb1tojb2 ~/sphinx-nla ~/jupyter-nla --folder-links
-  jb1tojb2 ~/sphinx-nla ~/jupyter-nla --folder-links --dry-run
-  jb1tojb2 ~/sphinx-nla --in-place --backup --folder-links
 
-Defaults added by this wrapper:
-  --recursive
+Meaning:
+  SOURCE_DIR   Your existing JB1/Sphinx MyST project or folder of .md files.
+  DEST_DIR     The JB2 destination folder where converted .md files will be written.
 
-Options passed through to jb1_to_jb2_myst.py:
-  --folder-links
-  --html-links
-  --in-place
-  --backup
-  --dry-run
-  --keep-sphinx-design
+This wrapper automatically uses:
+  --recursive      Convert .md files in subdirectories too.
+  --folder-links   Convert links like doc1.md to doc1/ for JB2 folder URLs.
 
 EOF
 }
 
-if [[ $# -eq 0 ]]; then
+if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
 
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-esac
+if [[ $# -ne 2 ]]; then
+  echo "Error: expected exactly two arguments: SOURCE_DIR DEST_DIR" >&2
+  echo >&2
+  usage >&2
+  exit 1
+fi
 
-python3 "$CONVERTER" "$@" --recursive
+if [[ ! -f "$CONVERTER" ]]; then
+  echo "Error: converter script not found: $CONVERTER" >&2
+  exit 1
+fi
+
+SRC="$1"
+DST="$2"
+
+python3 "$CONVERTER" "$SRC" "$DST" --recursive --folder-links
