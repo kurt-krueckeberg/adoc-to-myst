@@ -351,7 +351,7 @@ def convert_text(text: str, args: argparse.Namespace) -> str:
 
     converted = convert_ref_roles_to_markdown_links(converted)
     converted = attach_myst_labels(converted)
-    converted = convert_bare_internal_links_to_anchor_links(converted)
+    converted = convert_bare_image_anchor_links(converted)
 
     if not args.keep_sphinx_design:
         converted = convert_sphinx_design_blocks(converted)
