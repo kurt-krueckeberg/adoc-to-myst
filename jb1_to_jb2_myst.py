@@ -54,8 +54,11 @@ LOCAL_MD_LINK_RE = re.compile(
     r"\)"
 )
 
-FENCE_START_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})(?:\{[^}]*\}|[A-Za-z0-9_-]+)?\s*$")
+BARE_INTERNAL_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]]+)\]\((?P<target>image[A-Za-z0-9_.:-]*)\)"    
+)
 
+FENCE_START_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})(?:\{[^}]*\}|[A-Za-z0-9_-]+)?\s*$")
 
 SPHINX_DESIGN_BLOCK_DIRECTIVES = {
     "grid",
@@ -335,12 +338,20 @@ def transform_outside_fences(text: str, transform) -> str:
     flush_buffer()
     return "".join(out)
 
+def convert_bare_image_anchor_links(text: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        label = m.group("label")
+        target = m.group("target")
+        return f"[{label}](#{target})"
+
+    return BARE_IMAGE_ANCHOR_LINK_RE.sub(repl, text)
 
 def convert_text(text: str, args: argparse.Namespace) -> str:
     converted = text
 
     converted = convert_ref_roles_to_markdown_links(converted)
     converted = attach_myst_labels(converted)
+    converted = convert_bare_internal_links_to_anchor_links(converted)
 
     if not args.keep_sphinx_design:
         converted = convert_sphinx_design_blocks(converted)
@@ -353,7 +364,6 @@ def convert_text(text: str, args: argparse.Namespace) -> str:
     )
 
     return converted
-
 
 def iter_markdown_files(src: Path, recursive: bool) -> list[Path]:
     if src.is_file():
