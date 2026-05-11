@@ -2,24 +2,28 @@
 """
 Convert JB1/Sphinx MyST Markdown files to JB2/MyST Markdown.
 
-Main purpose:
-- keep ordinary MyST Markdown unchanged;
-- replace common sphinx_design directives, which JB2 generally will not process;
-- optionally rewrite local .md links to folder-style .html links;
-- process one file or an entire directory tree.
+This converter is intentionally narrow and conservative.
 
-This is intentionally conservative. It does not try to re-author your prose.
+It does:
+  1. Convert selected sphinx_design block directives to raw HTML wrappers.
+  2. Convert selected sphinx_design inline roles to HTML spans.
+  3. Rewrite LOCAL Markdown file links:
+       [text](doc1.md)     -> [text](doc1/)
+       [text](../x/y.md)   -> [text](../x/y/)
+     when --folder-links is used.
+  4. Rewrite LOCAL Markdown file links:
+       [text](doc1.md)     -> [text](doc1.html)
+     when --html-links is used.
 
-Usage examples:
+It does NOT:
+  - convert [text](#anchor) into {ref}`text <anchor>`;
+  - rewrite external URLs such as https://...;
+  - rewrite URLs inside raw citation text;
+  - rewrite links inside fenced code/directive blocks.
 
-  # Convert one file in place, keeping a .bak copy
-  python jb1_to_jb2_myst.py page.md --in-place --backup
+For your JB2 projects with `folders: true`, use:
 
-  # Convert a directory tree to another directory
-  python jb1_to_jb2_myst.py ~/sphinx-nla ~/jupyter-nla --recursive
-
-  # Convert and rewrite local markdown links to folder URLs
-  python jb1_to_jb2_myst.py ~/sphinx-nla ~/jupyter-nla --recursive --folder-links
+  python3 jb1_to_jb2_myst.py SOURCE_DIR DEST_DIR --recursive --folder-links
 """
 
 from __future__ import annotations
@@ -30,11 +34,28 @@ import re
 import shutil
 from pathlib import Path
 
-DIRECTIVE_START_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})\{(?P<name>[A-Za-z0-9_-]+)\}\s*$")
-FENCE_ONLY_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})\s*$")
+
+DIRECTIVE_START_RE = re.compile(
+    r"^(?P<fence>`{3,}|~{3,})\{(?P<name>[A-Za-z0-9_-]+)\}\s*$"
+)
 OPTION_RE = re.compile(r"^:(?P<key>[A-Za-z0-9_-]+):\s*(?P<value>.*)$")
 INLINE_ROLE_RE = re.compile(r"\{(?P<role>[A-Za-z0-9_-]+)\}`(?P<body>[^`]*)`")
-MD_LINK_RE = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<target>[^)]+\.md(?P<anchor>#[^)]+)?)(?P<title>\s+\"[^\"]*\")?\)")
+
+# Deliberately strict:
+# - target must end in .md, optionally followed by #anchor;
+# - target may not contain spaces, tabs, newlines, parentheses, or ':'.
+# This prevents corrupting external URLs and citation prose.
+LOCAL_MD_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]]+)\]"
+    r"\("
+    r"(?P<target>(?![A-Za-z][A-Za-z0-9+.-]*:)[^)\s:]+\.md)"
+    r"(?P<anchor>#[^)\s]+)?"
+    r"(?P<title>\s+\"[^\"]*\")?"
+    r"\)"
+)
+
+FENCE_START_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})(?:\{[^}]*\}|[A-Za-z0-9_-]+)?\s*$")
+
 
 SPHINX_DESIGN_BLOCK_DIRECTIVES = {
     "grid",
@@ -48,21 +69,33 @@ SPHINX_DESIGN_BLOCK_DIRECTIVES = {
 }
 
 SPHINX_DESIGN_INLINE_ROLES = {
-    "bdg", "bdg-primary", "bdg-secondary", "bdg-success", "bdg-info", "bdg-warning", "bdg-danger",
-    "btn", "btn-primary", "btn-secondary", "btn-success", "btn-info", "btn-warning", "btn-danger",
+    "bdg",
+    "bdg-primary",
+    "bdg-secondary",
+    "bdg-success",
+    "bdg-info",
+    "bdg-warning",
+    "bdg-danger",
+    "btn",
+    "btn-primary",
+    "btn-secondary",
+    "btn-success",
+    "btn-info",
+    "btn-warning",
+    "btn-danger",
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert JB1/Sphinx MyST Markdown to JB2-compatible MyST Markdown."
+        description="Conservatively convert JB1/Sphinx MyST Markdown to JB2/MyST Markdown."
     )
     parser.add_argument("src", type=Path, help="Source .md file or source directory")
     parser.add_argument("dst", type=Path, nargs="?", help="Destination file or directory. Omit with --in-place.")
     parser.add_argument("--recursive", action="store_true", help="Recursively process a directory tree")
     parser.add_argument("--in-place", action="store_true", help="Modify source files in place")
     parser.add_argument("--backup", action="store_true", help="When using --in-place, write .bak files first")
-    parser.add_argument("--folder-links", action="store_true", help="Rewrite local file.md links to file/index.html-style links")
+    parser.add_argument("--folder-links", action="store_true", help="Rewrite local file.md links to file/ links")
     parser.add_argument("--html-links", action="store_true", help="Rewrite local file.md links to file.html links")
     parser.add_argument("--keep-sphinx-design", action="store_true", help="Do not rewrite sphinx_design directives")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be changed without writing files")
@@ -77,7 +110,6 @@ def split_directive_header(line: str) -> tuple[str, str] | None:
 
 
 def find_closing_fence(lines: list[str], start_index: int, fence: str) -> int | None:
-    # A closing fence must be at least as long and use the same character.
     fence_char = fence[0]
     min_len = len(fence)
     closing_re = re.compile(rf"^{re.escape(fence_char)}{{{min_len},}}\s*$")
@@ -102,7 +134,6 @@ def strip_directive_options(block_lines: list[str]) -> tuple[dict[str, str], lis
         options[m.group("key")] = m.group("value")
         body_start += 1
 
-    # Remove only one blank separator after options.
     if body_start < len(block_lines) and not block_lines[body_start].strip():
         body_start += 1
 
@@ -110,7 +141,6 @@ def strip_directive_options(block_lines: list[str]) -> tuple[dict[str, str], lis
 
 
 def markdown_to_plainish_html(text: str) -> str:
-    """Small, safe conversion for titles/labels used inside generated HTML."""
     text = html.escape(text.strip())
     text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
@@ -120,23 +150,21 @@ def markdown_to_plainish_html(text: str) -> str:
 
 def block_to_html_directive(name: str, block_lines: list[str]) -> list[str]:
     options, body = strip_directive_options(block_lines)
+
     classes = ["jb1-sphinx-design", f"jb1-sd-{name}"]
-    if "class-card" in options:
-        classes.extend(options["class-card"].split())
-    if "class-item" in options:
-        classes.extend(options["class-item"].split())
-    if "class-container" in options:
-        classes.extend(options["class-container"].split())
+    for opt_name in ("class-card", "class-item", "class-container", "class"):
+        if opt_name in options:
+            classes.extend(options[opt_name].split())
 
     title = ""
     if name in {"card", "grid-item-card", "dropdown", "tab-item"} and body:
-        # sphinx_design commonly treats the first body line in cards/dropdowns/tabs as a title.
         title = body[0].strip()
         body = body[1:]
         if body and not body[0].strip():
             body = body[1:]
 
     class_attr = html.escape(" ".join(classes), quote=True)
+
     out: list[str] = []
     out.append("```{raw} html")
     out.append(f'<div class="{class_attr}">')
@@ -184,58 +212,121 @@ def convert_sphinx_design_blocks(text: str) -> str:
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
-def convert_inline_roles(text: str) -> str:
-    def repl(m: re.Match[str]) -> str:
-        role = m.group("role")
-        body = m.group("body")
-        if role not in SPHINX_DESIGN_INLINE_ROLES:
-            return m.group(0)
-        css_class = html.escape(role.replace("_", "-"), quote=True)
-        return f'<span class="{css_class}">{html.escape(body)}</span>'
+def convert_inline_roles_outside_fences(text: str) -> str:
+    def convert_segment(segment: str) -> str:
+        def repl(m: re.Match[str]) -> str:
+            role = m.group("role")
+            body = m.group("body")
+            if role not in SPHINX_DESIGN_INLINE_ROLES:
+                return m.group(0)
+            css_class = html.escape(role.replace("_", "-"), quote=True)
+            return f'<span class="{css_class}">{html.escape(body)}</span>'
 
-    return INLINE_ROLE_RE.sub(repl, text)
+        return INLINE_ROLE_RE.sub(repl, segment)
+
+    return transform_outside_fences(text, convert_segment)
 
 
-def rewrite_markdown_links(text: str, *, folder_links: bool, html_links: bool) -> str:
+def is_local_md_target(target: str) -> bool:
+    if not target.endswith(".md"):
+        return False
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
+        return False
+    if any(ch.isspace() for ch in target):
+        return False
+    return True
+
+
+def rewrite_markdown_links_outside_fences(text: str, *, folder_links: bool, html_links: bool) -> str:
     if not folder_links and not html_links:
         return text
 
-    def repl(m: re.Match[str]) -> str:
-        label = m.group("label")
-        target = m.group("target")
-        title = m.group("title") or ""
+    def convert_segment(segment: str) -> str:
+        def repl(m: re.Match[str]) -> str:
+            label = m.group("label")
+            target = m.group("target")
+            anchor = m.group("anchor") or ""
+            title = m.group("title") or ""
 
-        # Leave absolute URLs and special schemes alone.
-        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
-            return m.group(0)
+            if not is_local_md_target(target):
+                return m.group(0)
 
-        anchor = ""
-        if "#" in target:
-            target, anchor = target.split("#", 1)
-            anchor = "#" + anchor
+            if target.endswith("index.md"):
+                if folder_links:
+                    new_target = target[:-len("index.md")]
+                else:
+                    new_target = target[:-3] + ".html"
+            elif folder_links:
+                new_target = target[:-3] + "/"
+            else:
+                new_target = target[:-3] + ".html"
 
-        if target.endswith("index.md"):
-            new_target = target[:-len("index.md")] if folder_links else target[:-3] + ".html"
-        elif folder_links:
-            new_target = target[:-3] + "/"
+            return f"[{label}]({new_target}{anchor}{title})"
+
+        return LOCAL_MD_LINK_RE.sub(repl, segment)
+
+    return transform_outside_fences(text, convert_segment)
+
+
+def transform_outside_fences(text: str, transform) -> str:
+    """
+    Apply transform() only outside fenced blocks.
+
+    This prevents accidental edits inside code blocks, image directives,
+    raw HTML blocks, notes, and other fenced MyST directives.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    buffer: list[str] = []
+
+    def flush_buffer() -> None:
+        nonlocal buffer
+        if buffer:
+            out.append(transform("".join(buffer)))
+            buffer = []
+
+    for line in lines:
+        stripped = line.rstrip("\n\r")
+        if not in_fence:
+            m = FENCE_START_RE.match(stripped)
+            if m:
+                flush_buffer()
+                fence = m.group("fence")
+                in_fence = True
+                fence_char = fence[0]
+                fence_len = len(fence)
+                out.append(line)
+            else:
+                buffer.append(line)
         else:
-            new_target = target[:-3] + ".html"
+            out.append(line)
+            closing_re = re.compile(rf"^{re.escape(fence_char)}{{{fence_len},}}\s*$")
+            if closing_re.match(stripped):
+                in_fence = False
+                fence_char = ""
+                fence_len = 0
 
-        return f"[{label}]({new_target}{anchor}{title})"
-
-    return MD_LINK_RE.sub(repl, text)
+    flush_buffer()
+    return "".join(out)
 
 
 def convert_text(text: str, args: argparse.Namespace) -> str:
     converted = text
+
     if not args.keep_sphinx_design:
         converted = convert_sphinx_design_blocks(converted)
-        converted = convert_inline_roles(converted)
-    converted = rewrite_markdown_links(
+        converted = convert_inline_roles_outside_fences(converted)
+
+    converted = rewrite_markdown_links_outside_fences(
         converted,
         folder_links=args.folder_links,
         html_links=args.html_links,
     )
+
     return converted
 
 
@@ -267,6 +358,7 @@ def convert_file(src_file: Path, dst_file: Path, args: argparse.Namespace) -> bo
     converted = convert_text(original, args)
 
     changed = original != converted
+
     if args.dry_run:
         print(("CHANGED " if changed else "unchanged ") + str(src_file))
         return changed
