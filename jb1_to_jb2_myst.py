@@ -338,6 +338,10 @@ def transform_outside_fences(text: str, transform) -> str:
     flush_buffer()
     return "".join(out)
 
+BARE_IMAGE_ANCHOR_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]]+)\]\((?P<target>image[A-Za-z0-9_.:-]*)\)"
+)
+
 def convert_bare_image_anchor_links(text: str) -> str:
     def repl(m: re.Match[str]) -> str:
         label = m.group("label")
