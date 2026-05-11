@@ -1153,21 +1153,45 @@ def convert_bibliography(elem, current_doc, level=1):
     return out
 
 
+def strip_duplicate_bibliography_key(text, anchor_id):
+    """Remove the visible key emitted from an AsciiDoc bibliography anchor.
+
+    Asciidoctor represents [[[KEY]]] as a structural DocBook anchor and may
+    also leave a visible leading "[KEY]" in the bibliography text. Once this
+    converter emits the MyST target ``(KEY)=``, that visible key is redundant.
+    Only strip an exact leading key that matches the immediately preceding
+    bibliography anchor.
+    """
+    if not text or not anchor_id:
+        return text
+
+    pattern = rf"^\s*\[{re.escape(anchor_id)}\]\s*"
+    return re.sub(pattern, "", text, count=1)
+
+
 def convert_bibliomixed(elem, current_doc):
     parts = []
+    current_bib_anchor = None
+
     for child in elem:
         if child.tag == "anchor":
+            current_bib_anchor = elem_id(child)
             rendered = convert_anchor(child)
             if rendered:
                 parts.append(rendered)
         elif child.tag in ("bibliomisc", "simpara", "para"):
             text = render_inline(child, current_doc).strip()
+            text = strip_duplicate_bibliography_key(text, current_bib_anchor).strip()
             if text:
                 parts.append(text)
+            current_bib_anchor = None
         else:
             rendered = convert_element(child, current_doc).strip()
+            rendered = strip_duplicate_bibliography_key(rendered, current_bib_anchor).strip()
             if rendered:
                 parts.append(rendered)
+            current_bib_anchor = None
+
     if not parts:
         return ""
     return "\n\n".join(parts) + "\n\n"
