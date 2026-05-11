@@ -85,6 +85,28 @@ SPHINX_DESIGN_INLINE_ROLES = {
     "btn-danger",
 }
 
+REF_ROLE_RE = re.compile(
+    r"\{ref\}`(?P<label>.*?)\s*<(?P<target>[A-Za-z0-9_.:-]+)>`",
+    re.DOTALL,
+)
+
+LABEL_WITH_BLANK_RE = re.compile(
+    r"^(\([A-Za-z0-9_.:-]+\)=)\n+",
+    re.MULTILINE,
+)
+
+
+def convert_ref_roles_to_markdown_links(text: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        label = " ".join(m.group("label").split())
+        target = m.group("target")
+        return f"[{label}](#{target})"
+
+    return REF_ROLE_RE.sub(repl, text)
+
+
+def attach_myst_labels(text: str) -> str:
+    return LABEL_WITH_BLANK_RE.sub(r"\1\n", text)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -316,6 +338,9 @@ def transform_outside_fences(text: str, transform) -> str:
 
 def convert_text(text: str, args: argparse.Namespace) -> str:
     converted = text
+
+    converted = convert_ref_roles_to_markdown_links(converted)
+    converted = attach_myst_labels(converted)
 
     if not args.keep_sphinx_design:
         converted = convert_sphinx_design_blocks(converted)
