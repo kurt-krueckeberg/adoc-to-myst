@@ -23,6 +23,7 @@ It does NOT:
 
 For your JB2 projects with `folders: true`, use:
 
+  python3 jb1_to_jb2_myst.py SOURCE.md DEST.md --folder-links
   python3 jb1_to_jb2_myst.py SOURCE_DIR DEST_DIR --recursive --folder-links
 """
 
@@ -116,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         description="Conservatively convert JB1/Sphinx MyST Markdown to JB2/MyST Markdown."
     )
     parser.add_argument("src", type=Path, help="Source .md file or source directory")
-    parser.add_argument("dst", type=Path, nargs="?", help="Destination file or directory. Omit with --in-place.")
+    parser.add_argument("dst", type=Path, nargs="?", help="Destination file or directory. Omit with --in-place. For a single source file, this may be an output .md file or an existing directory.")
     parser.add_argument("--recursive", action="store_true", help="Recursively process a directory tree")
     parser.add_argument("--in-place", action="store_true", help="Modify source files in place")
     parser.add_argument("--backup", action="store_true", help="When using --in-place, write .bak files first")
@@ -387,8 +388,16 @@ def destination_for(src_file: Path, src_root: Path, dst_root: Path | None, in_pl
         return src_file
     if dst_root is None:
         raise SystemExit("Destination is required unless --in-place is used.")
+
+    # Single-file mode:
+    #   SOURCE.md DEST.md          -> write exactly DEST.md
+    #   SOURCE.md EXISTING_DIR     -> write EXISTING_DIR/SOURCE.md
     if src_root.is_file():
+        if dst_root.exists() and dst_root.is_dir():
+            return dst_root / src_file.name
         return dst_root
+
+    # Directory mode preserves paths relative to the source root.
     return dst_root / src_file.relative_to(src_root)
 
 
@@ -426,6 +435,9 @@ def main() -> None:
 
     src = args.src.expanduser().resolve()
     dst = args.dst.expanduser().resolve() if args.dst else None
+
+    if src.is_file() and args.recursive:
+        raise SystemExit("--recursive is only valid when the source is a directory.")
 
     files = iter_markdown_files(src, args.recursive)
     changed_count = 0

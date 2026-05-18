@@ -392,21 +392,17 @@ def convert_complex_table(elem, current_doc, caption):
     CURRENT_TABLE_INDEX += 1
 
     html_text = render_complex_html_table(elem, current_doc)
-
-    # Still write the artifact for inspection/debugging, but do not include it
-    # as Markdown source. MyST's include directive parses the included file as
-    # Markdown, and raw HTML tables with rowspan/colspan can then be misparsed
-    # or visibly leaked into the rendered table. Emitting the table through a
-    # raw HTML directive keeps the table as HTML and preserves all seven
-    # columns, row spans, column spans, and links.
-    write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
+    html_path = write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
 
     out = ""
     if caption:
         out += caption + "\n\n"
-    out += "<!-- Raw HTML table emitted because the original AsciiDoc table contains row or column spans that MyST list-table cannot represent. -->\n\n"
-    out += "```{raw} html\n"
-    out += html_text.rstrip() + "\n"
+
+    if html_path is None:
+        return out
+
+    include_path = html_path.relative_to(OUTPUT_MD_PATH.parent).as_posix()
+    out += f"```{{include}} {include_path}\n"
     out += "```\n\n"
     return out
 
@@ -935,11 +931,27 @@ def render_inline(elem, current_doc):
             out += render_xref(child, current_doc)
 
         elif child.tag == "ulink":
-            url = child.attrib.get("url", "")
-            url = normalize_docbook_href(url, current_doc)
-            label = render_inline(child, current_doc) or url
-            label = escape_markdown_link_text(label)
-            out += f"[{label}]({url})"
+            raw_url = child.attrib.get("url", "").strip()
+            href = normalize_docbook_href(raw_url, current_doc)
+            label = render_inline(child, current_doc).strip()
+
+            # For external URLs, Asciidoctor/DocBook can sometimes leave a
+            # malformed visible label such as ``https:.md`` after earlier path
+            # normalization. A bare AsciiDoc URL should display the URL itself,
+            # not a fabricated Markdown page name.
+            if raw_url and (
+                "://" in raw_url
+                and (
+                    not label
+                    or label == raw_url
+                    or re.fullmatch(r"https?:\.md", label)
+                    or label.endswith(".md") and raw_url.startswith(("http://", "https://"))
+                )
+            ):
+                label = raw_url
+
+            label = escape_markdown_link_text(label or href)
+            out += f"[{label}]({href})"
 
         elif child.tag == "link":
             out += render_link(child, current_doc)
@@ -1170,32 +1182,33 @@ def strip_duplicate_bibliography_key(text, anchor_id):
 
 
 def convert_bibliomixed(elem, current_doc):
-    parts = []
-    current_bib_anchor = None
+    """Convert one DocBook bibliography entry.
 
-    for child in elem:
-        if child.tag == "anchor":
-            current_bib_anchor = elem_id(child)
-            rendered = convert_anchor(child)
-            if rendered:
-                parts.append(rendered)
-        elif child.tag in ("bibliomisc", "simpara", "para"):
-            text = render_inline(child, current_doc).strip()
-            text = strip_duplicate_bibliography_key(text, current_bib_anchor).strip()
-            if text:
-                parts.append(text)
-            current_bib_anchor = None
-        else:
-            rendered = convert_element(child, current_doc).strip()
-            rendered = strip_duplicate_bibliography_key(rendered, current_bib_anchor).strip()
-            if rendered:
-                parts.append(rendered)
-            current_bib_anchor = None
+    Asciidoctor represents AsciiDoc ``[[[KEY]]]`` bibliography entries as an
+    anchor plus inline text. The visible ``[KEY]`` must be removed after the
+    MyST target is emitted, and inline URL text must remain a normal external
+    Markdown link. Rendering the whole mixed-content element preserves normal
+    text, child tails, emphasis, and links in the correct order.
+    """
+    anchor_ids = [elem_id(child) for child in elem if child.tag == "anchor" and elem_id(child)]
 
-    if not parts:
+    text = render_inline(elem, current_doc).strip()
+    if not text:
         return ""
-    return "\n\n".join(parts) + "\n\n"
 
+    for anchor_id in anchor_ids:
+        # Replace:
+        #   (KEY)=
+        #
+        #   [KEY] citation text
+        # with:
+        #   (KEY)=
+        #
+        #   citation text
+        pattern = rf"(\({re.escape(anchor_id)}\)=\s*\n+)\s*\[{re.escape(anchor_id)}\]\s*"
+        text = re.sub(pattern, rf"\1", text, count=1)
+
+    return text.rstrip() + "\n\n"
 
 def convert_bibliodiv(elem, current_doc, level=1):
     out = ""

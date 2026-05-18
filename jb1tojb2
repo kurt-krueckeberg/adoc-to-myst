@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple wrapper for jb1_to_jb2_myst.py
+# Wrapper for jb1_to_jb2_myst.py.
 #
-# Normal use:
+# Single-file use:
+#   jb1tojb2 SOURCE.md DEST.md
+#
+# Directory use:
 #   jb1tojb2 SOURCE_DIR DEST_DIR
 #
-# Example:
-#   jb1tojb2 ~/sphinx-nla ~/jupyter-nla
-#
-# What it does:
-#   - recursively converts .md files from SOURCE_DIR
-#   - writes converted files to DEST_DIR
-#   - rewrites local .md links to JB2 folder-style links
-#
-# It runs this converter:
-#   ~/adoc-to-myst/jb1_to_jb2_myst.py
+# The wrapper always uses --folder-links. It uses --recursive only when
+# SOURCE is a directory.
 
-CONVERTER="$HOME/adoc-to-myst/jb1_to_jb2_myst.py"
+CONVERTER="${JB1_TO_JB2_CONVERTER:-$HOME/adoc-to-myst/jb1_to_jb2_myst.py}"
 
 usage() {
   cat <<'EOF'
 Usage:
+  jb1tojb2 SOURCE.md DEST.md
   jb1tojb2 SOURCE_DIR DEST_DIR
 
-Example:
+Examples:
+  jb1tojb2 ~/sphinx-nla/1237/example.md ~/jupyter-nla/1237/example.md
   jb1tojb2 ~/sphinx-nla ~/jupyter-nla
 
 Meaning:
-  SOURCE_DIR   Your existing JB1/Sphinx MyST project or folder of .md files.
-  DEST_DIR     The JB2 destination folder where converted .md files will be written.
+  SOURCE.md   One JB1/Sphinx MyST Markdown file.
+  DEST.md     One JB2/MyST Markdown output file.
+
+  SOURCE_DIR  Folder containing JB1/Sphinx MyST Markdown files.
+  DEST_DIR    JB2 destination folder where converted .md files are written.
 
 This wrapper automatically uses:
-  --recursive      Convert .md files in subdirectories too.
   --folder-links   Convert links like doc1.md to doc1/ for JB2 folder URLs.
 
+For directory input, it also uses:
+  --recursive      Convert .md files in subdirectories too.
+
+Set JB1_TO_JB2_CONVERTER=/path/to/jb1_to_jb2_myst.py to override the converter path.
 EOF
 }
 
@@ -44,7 +47,7 @@ if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [[ $# -ne 2 ]]; then
-  echo "Error: expected exactly two arguments: SOURCE_DIR DEST_DIR" >&2
+  echo "Error: expected exactly two arguments: SOURCE DEST" >&2
   echo >&2
   usage >&2
   exit 1
@@ -58,4 +61,11 @@ fi
 SRC="$1"
 DST="$2"
 
-python3 "$CONVERTER" "$SRC" "$DST" --recursive --folder-links
+if [[ -f "$SRC" ]]; then
+  python3 "$CONVERTER" "$SRC" "$DST" --folder-links
+elif [[ -d "$SRC" ]]; then
+  python3 "$CONVERTER" "$SRC" "$DST" --recursive --folder-links
+else
+  echo "Error: source is not a file or directory: $SRC" >&2
+  exit 1
+fi
