@@ -541,11 +541,6 @@ def format_cross_component_xref_for_error(target):
 
 
 def require_component_mapping_for_empty_cross_component_xref(target):
-    target = (target or "").strip()
-
-    if not target or "://" in target or target.startswith("#"):
-        return
-
     parsed = split_antora_target(target)
     if not parsed or parsed["kind"] != "cross_component_page":
         return
