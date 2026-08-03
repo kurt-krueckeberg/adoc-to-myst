@@ -30,11 +30,15 @@ Next ,create `.gitignore` in `~/adoc-2-myst` and added:
 ```bash
 /dbcookbook/
 ```
-## Create Symlink in /usr/local/bin
+## Create Symlinks in /usr/local/bin
 
-sudo ln -s ~/adoc-2-myst/adco2myst /usr/local/bin/adoc2myst
+    sudo ln -s ~/adoc-2-myst/adoc2jb1 /usr/local/bin/adoc2jb1
 
-sudo chmod +x /usr/local/bin/adoc2myst
+    sudo ln -s ~/adoc-2-myst/adoc2jb2 /usr/local/bin/adoc2jb2
+
+    sudo chmod +x /usr/local/bin/adoc2jb1
+
+    sudo chmod +x /usr/local/bin/adoc2jb2
 
 ## Run adoc2myst
 
