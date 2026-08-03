@@ -5,6 +5,10 @@ needs some basic setup first though.
 
 ## Basic Setup
 
+Both `asciidoctor` and `libxslt` need to be installed:
+
+`sudo dnf install asciidoctor libxslt`
+
 Afte cloing the repo:
 
 ```bash
@@ -40,7 +44,7 @@ Next ,create `.gitignore` in `~/adoc-2-myst` and added:
 
     sudo chmod +x /usr/local/bin/adoc2jb2
 
-## Run adoc2myst
+## Run adoc2jb1
 
 This example demonstations the CLI command to convert the AsciiDoc files in Antora project in
 `~/antora-nla` to MyST markdown files `sphinx-nla/source`:
@@ -58,9 +62,10 @@ while IFS= read -r -d '' src; do
 done
 ```
 
-> [!NOTE]
-> The `--components-file` parameter specifies a YAML file that maps other
-> Antora components to their respective folders. It is only necessary if
-> your project has `xref:`'s that reference other components, like for
-> example:
-> `xref:genealogy:petzen:PET-M-1822a.adoc[]`. 
+## NOTE
+
+The `--components-file` parameter specifies a YAML file that maps other
+Antora components to their respective folders. It is only necessary if
+your project has `xref:`'s that reference other components, like for
+example:\
+`xref:genealogy:petzen:PET-M-1822a.adoc[]`. 
