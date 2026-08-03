@@ -1,7 +1,7 @@
 # AsciiDoc to MyST Markdown Converter
 
 The bash script `adoc2myst` converts AsciiDoc files to MyST markdown. It
-needs some basic setup firt, though.
+needs some basic setup first though.
 
 ## Basic Setup
 
@@ -15,7 +15,7 @@ These prerequistes must be done:
 
 1. AsciiDoctor must be installed. To install asciidoctor, wee how to [Install AsciiDoctor](https://docs.asciidoctor.org/asciidoctor/latest/install/).
 2. The [dbcookbook repo](https://github.com/tomschr/dbcookbook) must be
-  cloned witin **~/adoc-2-myst**:
+  cloned within **~/adoc-2-myst**:
 
 ```bash
 cd ~/adoc-2-myst

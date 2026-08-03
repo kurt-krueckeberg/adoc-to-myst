@@ -2,6 +2,7 @@
 
 # adoc2myst: convert an Antora/AsciiDoc page to MyST Markdown via
 # Asciidoctor DocBook 5 -> DocBook 4 -> convert2jupbook1.py.
+# One has to install the prerequisites: see README.md.
 #
 # Usage:
 #   adoc2myst --modules-dir /path/to/modules \
