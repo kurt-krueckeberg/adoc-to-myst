@@ -32,9 +32,9 @@ Next ,create `.gitignore` in `~/adoc-2-myst` and added:
 ```
 ## Create Symlinks in /usr/local/bin
 
-    sudo ln -s ~/adoc-2-myst/adoc2jb1 /usr/local/bin/adoc2jb1
+    sudo ln -s /home/kurt/adoc-to-myst/adoc2jb1 /usr/local/bin/adoc2jb1
 
-    sudo ln -s ~/adoc-2-myst/adoc2jb2 /usr/local/bin/adoc2jb2
+    sudo ln -s /home/kurt/adoc-to-myst/adoc2jb2 /usr/local/bin/adoc2jb2
 
     sudo chmod +x /usr/local/bin/adoc2jb1
 

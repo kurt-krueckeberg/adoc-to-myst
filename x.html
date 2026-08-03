@@ -1,0 +1,55 @@
+<h1>AsciiDoc to MyST Markdown Converter</h1>
+<p>The bash script <code>adoc2myst</code> converts AsciiDoc files to
+MyST markdown. It needs some basic setup first though.</p>
+<h2>Basic Setup</h2>
+<p>Afte cloing the repo:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/kurt-krueckeberg/adoc-to-myst.git</span></code></pre></div>
+<p>These prerequistes must be done:</p>
+<ol type="1">
+<li>AsciiDoctor must be installed. To install asciidoctor, wee how to <a
+href="https://docs.asciidoctor.org/asciidoctor/latest/install/">Install
+AsciiDoctor</a>.</li>
+<li>The <a href="https://github.com/tomschr/dbcookbook">dbcookbook
+repo</a> must be cloned within <strong>~/adoc-2-myst</strong>:</li>
+</ol>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/adoc-2-myst</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone git@github.com:tomschr/dbcookbook.git</span></code></pre></div>
+<p>Next, the <strong>copy.xsl</strong> file located in
+<code>dbcookbook/en/xml/structure/common</code>, must be copied to
+<code>dbcookbook/en/xml/structure/db5-to-db4</code>.</p>
+<p>Next ,create <code>.gitignore</code> in <code>~/adoc-2-myst</code>
+and added:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">/dbcookbook/</span></span></code></pre></div>
+<h2>Create Symlinks in /usr/local/bin</h2>
+<pre><code>sudo ln -s ~/adoc-2-myst/adoc2jb1 /usr/local/bin/adoc2jb1
+
+sudo ln -s ~/adoc-2-myst/adoc2jb2 /usr/local/bin/adoc2jb2
+
+sudo chmod +x /usr/local/bin/adoc2jb1
+
+sudo chmod +x /usr/local/bin/adoc2jb2</code></pre>
+<h2>Run adoc2myst</h2>
+<p>This example demonstations the CLI command to convert the AsciiDoc
+files in Antora project in <code>~/antora-nla</code> to MyST markdown
+files <code>sphinx-nla/source</code>:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">find</span> ~/antora-nla/modules <span class="at">-type</span> f <span class="at">-path</span> <span class="st">&#39;*/pages/*.adoc&#39;</span> <span class="at">-print0</span> <span class="kw">|</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="cf">while</span> <span class="va">IFS</span><span class="op">=</span> <span class="bu">read</span> <span class="at">-r</span> <span class="at">-d</span> <span class="st">&#39;&#39;</span> <span class="va">src</span><span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="va">rel</span><span class="op">=</span><span class="st">&quot;</span><span class="va">${src</span><span class="op">#</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/antora-nla/modules/&quot;</span><span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="va">module</span><span class="op">=</span><span class="st">&quot;</span><span class="va">${rel</span><span class="op">%%</span>/<span class="pp">*</span><span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="va">rest</span><span class="op">=</span><span class="st">&quot;</span><span class="va">${rel</span><span class="op">#</span><span class="pp">*</span>/pages/<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="va">out</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/sphinx-nla/source/</span><span class="va">$module</span><span class="st">/</span><span class="va">${rest</span><span class="op">%</span>.adoc<span class="va">}</span><span class="st">.md&quot;</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$(</span><span class="fu">dirname</span> <span class="st">&quot;</span><span class="va">$out</span><span class="st">&quot;</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="bu">printf</span> <span class="st">&#39;Converting: %s -&gt; %s\n&#39;</span> <span class="st">&quot;</span><span class="va">$src</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$out</span><span class="st">&quot;</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    <span class="ex">adoc2myst</span> <span class="st">&quot;</span><span class="va">$src</span><span class="st">&quot;</span> <span class="at">--modules-dir</span> ~/antora-nla/modules  <span class="at">--components-file</span> ~/adoc-to-myst/components-example.yml  <span class="at">-o</span> <span class="st">&quot;</span><span class="va">$out</span><span class="st">&quot;</span> </span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span></code></pre></div>
+<blockquote>
+<p>[!NOTE] The <code>--components-file</code> parameter specifies a YAML
+file that maps other Antora components to their respective folders. It
+is only necessary if your project has <code>xref:</code>'s that
+reference other components, like for example:
+<code>xref:genealogy:petzen:PET-M-1822a.adoc[]</code>.</p>
+</blockquote>
