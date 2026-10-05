@@ -59,3 +59,13 @@ if [[ -d "$SRC" && -f "$DST/_config.yml" && ! -f "$DST/myst.yml" ]]; then
   # init asks for confirmation; `|| true` stops yes's SIGPIPE tripping pipefail.
   (cd "$DST" && { yes || true; } | jupyter-book init --write-toc)
 fi
+
+# Register the flat-table plugin the converter copied in, if any.
+if [[ -d "$SRC" && -f "$DST/flat-table.mjs" && -f "$DST/myst.yml" ]] \
+   && ! grep -q 'flat-table.mjs' "$DST/myst.yml"; then
+  if grep -q '^  plugins:' "$DST/myst.yml"; then
+    sed -i 's/^  plugins:$/&\n    - flat-table.mjs/' "$DST/myst.yml"
+  else
+    sed -i '0,/^project:$/s//&\n  plugins:\n    - flat-table.mjs/' "$DST/myst.yml"
+  fi
+fi

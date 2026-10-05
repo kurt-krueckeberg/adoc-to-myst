@@ -17,7 +17,9 @@ little. Every .md file gets these rewrites (never inside code or raw blocks):
                                                   JB2 truncates non-ASCII labels)
 
 All other files (images, _config.yml, _toc.yml, CSS, ...) are copied as-is.
-Afterwards run `jupyter-book init` in the destination to migrate the config.
+If the book uses {flat-table}, jb2-plugins/flat-table.mjs is copied to the book root.
+Afterwards run `jupyter-book init` in the destination to migrate the config,
+and list flat-table.mjs under project: plugins: in myst.yml (jb1tojb2 does both).
 
 Constructs that JB2 or its Typst/PDF output would drop or need help with are
 listed in a report at the end.
@@ -38,6 +40,7 @@ from pathlib import Path
 
 SKIP_DIRS = {"_build", ".git", ".venv", "venv", "__pycache__", ".ipynb_checkpoints", "node_modules"}
 BOOK_ROOT_MARKERS = ("_config.yml", "_toc.yml", "myst.yml")
+FLAT_TABLE_PLUGIN = Path(__file__).resolve().parent / "jb2-plugins" / "flat-table.mjs"
 
 # Directives whose body is literal text, not Markdown.
 LITERAL_DIRECTIVES = {
@@ -70,6 +73,7 @@ REPORT_HTML_RE = re.compile(
 class Report:
     def __init__(self) -> None:
         self.items: list[str] = []
+        self.flat_tables = 0
 
     def add(self, path: Path, lineno: int, msg: str) -> None:
         self.items.append(f"{path}:{lineno}: {msg}")
@@ -241,7 +245,7 @@ def report_file(text: str, path: Path, report: Report) -> None:
                 m = FENCE_RE.match(line.rstrip("\n"))
                 d = DIRECTIVE_INFO_RE.match(m.group("info").strip()) if m else None
                 if d and d.group("name") == "flat-table":
-                    report.add(path, lineno, "{flat-table} needs the flat-table mystmd plugin")
+                    report.flat_tables += 1
                 if d and d.group("name") == "include" and d.group("arg").endswith((".html", ".htm")):
                     report.add(path, lineno, f"includes raw HTML file {d.group('arg')} (dropped in PDF)")
                 continue
@@ -312,6 +316,11 @@ def main() -> None:
         raise SystemExit(f"Source does not exist: {src}")
 
     print(f"Converted {total} .md file(s) ({changed} changed); copied {copied} other file(s).")
+    if report.flat_tables:
+        plugin_dir = dst if src.is_dir() else find_book_root(dst)
+        if not args.dry_run:
+            shutil.copy2(FLAT_TABLE_PLUGIN, plugin_dir / FLAT_TABLE_PLUGIN.name)
+        print(f"{report.flat_tables} flat-table(s): copied {FLAT_TABLE_PLUGIN.name} to {plugin_dir}")
     if report.items:
         print(f"\nNeeds attention ({len(report.items)}):")
         for item in report.items:
