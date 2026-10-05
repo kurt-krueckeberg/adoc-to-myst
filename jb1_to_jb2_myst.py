@@ -205,8 +205,9 @@ def convert_directive_headers(lines: list[str], labels: set[str]) -> list[str]:
 
 
 def bare_link(m: re.Match[str], labels: set[str]) -> str:
+    """[text](label) -> [text](#label). `labels` is lowercased: labels ignore case."""
     target = m.group("target")
-    if target in labels:
+    if target.lower() in labels:
         return f"[{m.group('text')}](#{target})"
     return m.group(0)
 
@@ -260,6 +261,7 @@ def convert_file(
     label_map: dict[str, str], report: Report, dry_run: bool,
 ) -> bool:
     original = src.read_text(encoding="utf-8")
+    labels = {label.lower() for label in labels}
     lines = convert_directive_headers(original.splitlines(keepends=True), labels)
     parts = []
     for is_md, seg in split_segments(lines):
