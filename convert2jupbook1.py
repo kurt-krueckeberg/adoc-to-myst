@@ -94,23 +94,6 @@ def preserve_full_asciidoc_source():
     shutil.copyfile(CURRENT_ADOC_SOURCE, target)
     FULL_ADOC_PRESERVED = True
 
-def current_table_basename(index):
-    stem = OUTPUT_MD_PATH.stem if OUTPUT_MD_PATH is not None else PurePosixPath("page.md").stem
-    return f"{stem}-table-{index:02d}"
-
-def write_complex_table_artifacts(index, html_text):
-    if ARTIFACT_DIR is None:
-        return None
-
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-
-    basename = current_table_basename(index)
-
-    html_path = ARTIFACT_DIR / f"{basename}.html"
-    html_path.write_text(html_text, encoding="utf-8")
-
-    return html_path
-
 def html_escape_text(text):
     return html.escape(text, quote=False)
 
@@ -162,203 +145,6 @@ def entry_rowspan(entry):
         return 1
 
 
-def html_href_from_docbook_target(target, current_doc):
-    """Return an href suitable for raw HTML output.
-
-    The normal MyST renderer intentionally emits .md links because Sphinx/MyST
-    resolves them during the build. Raw HTML bypasses that resolver, so local
-    page links in raw HTML must point at the built .html files instead.
-    """
-    href = normalize_docbook_href(target, current_doc)
-
-    if not href:
-        return href
-    if "://" in href or href.startswith("#") or href.startswith("mailto:"):
-        return href
-
-    # Cross-component links may be returned as MyST roles by normalize_docbook_href.
-    # Raw HTML cannot contain MyST roles, so fall back to a harmless target.
-    if href.startswith("{external+"):
-        return "#"
-
-    path, sep, frag = href.partition("#")
-    if path.endswith(".md"):
-        path = path[:-3] + ".html"
-    return path + (sep + frag if sep else "")
-
-
-def render_inline_html_text(text):
-    return html.escape(text or "", quote=False)
-
-
-def render_html_anchor(href, label, external=False):
-    href = html.escape(href or "#", quote=True)
-    label = label or href
-    if external:
-        return f'<a class="reference external" href="{href}">{label}</a>'
-    return f'<a class="reference internal" href="{href}"><span class="std std-doc">{label}</span></a>'
-
-
-def render_link_html(elem, current_doc):
-    ulink = elem.find("ulink")
-    if ulink is not None:
-        url = ulink.attrib.get("url", "").strip()
-        href = html_href_from_docbook_target(url, current_doc)
-        label = render_inline_html_text(link_label_from_ulink(ulink) or href)
-        return render_html_anchor(href, label, external=("://" in href))
-
-    linkend = elem.attrib.get("linkend", "").strip()
-    if linkend:
-        href = html_href_from_docbook_target(linkend, current_doc)
-        label = render_inline_html(elem, current_doc).strip()
-        if not label:
-            label = render_inline_html_text(fallback_label_from_target(linkend) or href)
-        return render_html_anchor(href, label, external=("://" in href))
-
-    return render_inline_html(elem, current_doc)
-
-
-def render_inline_html(elem, current_doc):
-    """Render DocBook inline content as HTML, not Markdown/MyST."""
-    out = ""
-
-    if elem.text:
-        out += render_inline_html_text(elem.text)
-
-    for child in elem:
-        if child.tag == "emphasis":
-            inner = render_inline_html(child, current_doc)
-            if child.attrib.get("role", "") == "strong":
-                out += f"<strong>{inner}</strong>"
-            else:
-                out += f"<em>{inner}</em>"
-
-        elif child.tag == "xref":
-            target = child.attrib.get("linkend", "").strip() or child.attrib.get("endterm", "").strip()
-            href = html_href_from_docbook_target(target, current_doc)
-            label = render_inline_html(child, current_doc).strip()
-            if not label or label == render_inline_html_text(target) or label.endswith(".xml"):
-                label = render_inline_html_text(fallback_label_from_target(target) or href)
-            out += render_html_anchor(href, label, external=("://" in href))
-
-        elif child.tag == "ulink":
-            url = child.attrib.get("url", "").strip()
-            href = html_href_from_docbook_target(url, current_doc)
-            label = render_inline_html(child, current_doc).strip() or render_inline_html_text(href)
-            out += render_html_anchor(href, label, external=("://" in href))
-
-        elif child.tag == "link":
-            out += render_link_html(child, current_doc)
-
-        elif child.tag == "phrase" and child.attrib.get("role", "") == "line-through":
-            out += f"<s>{render_inline_html(child, current_doc)}</s>"
-
-        else:
-            out += render_inline_html(child, current_doc)
-
-        if child.tail:
-            out += render_inline_html_text(child.tail)
-
-    return out.strip() if elem.tag in ("para", "simpara") else out
-
-
-def cell_html_contents(entry, current_doc):
-    parts = []
-    for child in entry:
-        if child.tag in ("para", "simpara"):
-            text = render_inline_html(child, current_doc).strip()
-            if text:
-                parts.append(f"<p>{text}</p>")
-        elif child.tag == "literallayout":
-            text = html.escape(render_literallayout_text(child, current_doc), quote=False)
-            if text:
-                parts.append(f"<pre>{text}</pre>")
-
-    if parts:
-        return "".join(parts)
-
-    text = render_inline_html(entry, current_doc).strip()
-    return text if text else ""
-
-
-def render_html_table_rows(parent, current_doc, name_to_index, cell_tag):
-    if parent is None:
-        return ""
-
-    rows = parent.findall("row")
-    if not rows:
-        return ""
-
-    out = []
-    for row in rows:
-        # Do not emit row-odd/row-even classes for raw HTML fallback tables.
-        # Zebra striping is misleading when cells use rowspan, because a spanning
-        # cell visually crosses rows with different background colors.
-        out.append("  <tr>")
-        for entry in row.findall("entry"):
-            attrs = []
-            if cell_tag == "th":
-                attrs.append(' class="head"')
-            rowspan = entry_rowspan(entry)
-            colspan = entry_colspan(entry, name_to_index)
-            if rowspan > 1:
-                attrs.append(f' rowspan="{rowspan}"')
-            if colspan > 1:
-                attrs.append(f' colspan="{colspan}"')
-            content = cell_html_contents(entry, current_doc)
-            out.append(f"    <{cell_tag}{''.join(attrs)}>{content}</{cell_tag}>")
-        out.append("  </tr>")
-
-    return "\n".join(out)
-
-
-def render_complex_html_table(elem, current_doc):
-    name_to_index = colname_to_index_map(elem)
-    thead = elem.find(".//thead")
-    tbody = elem.find(".//tbody")
-    tfoot = elem.find(".//tfoot")
-
-    # JB1/Sphinx themes may zebra-stripe rows with CSS nth-child selectors,
-    # even when row-odd/row-even classes are absent. Raw fallback tables may
-    # contain rowspan cells, so striping is visually misleading. Add a scoped
-    # class plus a scoped CSS override inside the artifact itself.
-    parts = [
-        '<style>',
-        '.no-zebra-rowspan-table tbody tr,',
-        '.no-zebra-rowspan-table tbody tr:nth-child(odd),',
-        '.no-zebra-rowspan-table tbody tr:nth-child(even),',
-        '.no-zebra-rowspan-table tbody td,',
-        '.no-zebra-rowspan-table tbody th {',
-        '  background-color: transparent !important;',
-        '}',
-        '</style>',
-        '<div class="pst-scrollable-table-container" tabindex="-1">',
-        '<table class="table no-zebra-rowspan-table">',
-    ]
-
-    head_rows = render_html_table_rows(thead, current_doc, name_to_index, "th")
-    if head_rows:
-        parts.append("  <thead>")
-        parts.append(head_rows)
-        parts.append("  </thead>")
-
-    body_rows = render_html_table_rows(tbody, current_doc, name_to_index, "td")
-    if body_rows:
-        parts.append("  <tbody>")
-        parts.append(body_rows)
-        parts.append("  </tbody>")
-
-    foot_rows = render_html_table_rows(tfoot, current_doc, name_to_index, "td")
-    if foot_rows:
-        parts.append("  <tfoot>")
-        parts.append(foot_rows)
-        parts.append("  </tfoot>")
-
-    parts.append("</table>")
-    parts.append("</div>")
-    return "\n".join(parts) + "\n"
-
-
 def table_has_rowspan(elem):
     return any(entry_rowspan(entry) > 1 for entry in elem.findall(".//entry"))
 
@@ -383,28 +169,8 @@ def table_has_colspan(elem):
     return False
 
 
-def table_requires_html_fallback(elem):
+def table_has_spans(elem):
     return table_has_rowspan(elem) or table_has_colspan(elem)
-
-
-def convert_complex_table(elem, current_doc, caption):
-    global CURRENT_TABLE_INDEX
-    CURRENT_TABLE_INDEX += 1
-
-    html_text = render_complex_html_table(elem, current_doc)
-    html_path = write_complex_table_artifacts(CURRENT_TABLE_INDEX, html_text)
-
-    out = ""
-    if caption:
-        out += caption + "\n\n"
-
-    if html_path is None:
-        return out
-
-    include_path = html_path.relative_to(OUTPUT_MD_PATH.parent).as_posix()
-    out += f"```{{include}} {include_path}\n"
-    out += "```\n\n"
-    return out
 
 
 def normalize_component_root_path(path_value):
@@ -1573,6 +1339,57 @@ def convert_simple_list_table(elem, current_doc, caption=""):
     return out
 
 
+def flat_table_span_prefix(entry, name_to_index):
+    # linuxdoc flat-table counts *additional* columns/rows, so cspan is
+    # colspan - 1 and rspan is the DocBook morerows value.
+    prefix = ""
+    cspan = entry_colspan(entry, name_to_index) - 1
+    rspan = entry_rowspan(entry) - 1
+    if cspan > 0:
+        prefix += f"{{cspan}}`{cspan}` "
+    if rspan > 0:
+        prefix += f"{{rspan}}`{rspan}` "
+    return prefix
+
+
+def convert_flat_table(elem, current_doc, caption=""):
+    """Render a table with row/column spans as a linuxdoc flat-table.
+
+    Requires the linuxdoc.rstFlatTable Sphinx extension in the Jupyter Book.
+    """
+    name_to_index = colname_to_index_map(elem)
+    spanner_caption, has_spanner_caption = extract_full_width_spanner_caption(elem, current_doc)
+    rows = get_rows(elem, skip_first_full_width_spanner=has_spanner_caption)
+    if not rows:
+        return ""
+
+    final_caption = spanner_caption or caption
+    final_caption = " ".join(final_caption.split()).strip()
+
+    if final_caption:
+        out = f"```{{flat-table}} {final_caption}\n"
+    else:
+        out = "```{flat-table}\n"
+
+    header_rows = header_rows_from_table(elem, skip_first_full_width_spanner=has_spanner_caption)
+    if header_rows > 0:
+        out += f":header-rows: {header_rows}\n"
+    out += "\n"
+
+    for row in rows:
+        for i, cell in enumerate(row):
+            paras = render_cell_paragraphs(cell, current_doc)
+            # DocBook pretty-print indentation (e.g. after an AsciiDoc hard
+            # line break) would otherwise become a Markdown code block.
+            paras = ["\n".join(line.lstrip() for line in para.split("\n")) for para in paras]
+            paras[0] = flat_table_span_prefix(cell, name_to_index) + paras[0]
+            cell_md = emit_list_table_cell(paras, "  ")
+            out += ("* " + cell_md[2:]) if i == 0 else cell_md
+
+    out += "```\n\n"
+    return out
+
+
 def render_literallayout_text(elem, current_doc):
     out = elem.text or ""
     for child in elem:
@@ -1589,10 +1406,10 @@ def convert_table(elem, current_doc):
     title = elem.find("title")
     caption = render_inline(title, current_doc) if title is not None else ""
 
-    if table_requires_html_fallback(elem):
-        return convert_complex_table(elem, current_doc, caption)
-
-    out = convert_simple_list_table(elem, current_doc, caption=caption)
+    if table_has_spans(elem):
+        out = convert_flat_table(elem, current_doc, caption=caption)
+    else:
+        out = convert_simple_list_table(elem, current_doc, caption=caption)
 
     global CURRENT_TABLE_INDEX
     CURRENT_TABLE_INDEX += 1
