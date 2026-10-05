@@ -1,41 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Wrapper for jb1_to_jb2_myst.py.
+# Wrapper for jb1_to_jb2_myst.py: copy a JB1 book to a new directory,
+# converted for JB2, then migrate its config with `jupyter-book init`.
 #
-# Single-file use:
-#   jb1tojb2 SOURCE.md DEST.md
-#
-# Directory use:
 #   jb1tojb2 SOURCE_DIR DEST_DIR
-#
-# The wrapper always uses --folder-links. It uses --recursive only when
-# SOURCE is a directory.
+#   jb1tojb2 SOURCE.md DEST.md
 
 CONVERTER="${JB1_TO_JB2_CONVERTER:-$HOME/adoc-to-myst/jb1_to_jb2_myst.py}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  jb1tojb2 SOURCE.md DEST.md
   jb1tojb2 SOURCE_DIR DEST_DIR
+  jb1tojb2 SOURCE.md DEST.md
 
 Examples:
-  jb1tojb2 ~/sphinx-nla/1237/example.md ~/jupyter-nla/1237/example.md
   jb1tojb2 ~/sphinx-nla ~/jupyter-nla
+  jb1tojb2 ~/sphinx-nla/1237/example.md ~/jupyter-nla/1237/example.md
 
-Meaning:
-  SOURCE.md   One JB1/Sphinx MyST Markdown file.
-  DEST.md     One JB2/MyST Markdown output file.
-
-  SOURCE_DIR  Folder containing JB1/Sphinx MyST Markdown files.
-  DEST_DIR    JB2 destination folder where converted .md files are written.
-
-This wrapper automatically uses:
-  --folder-links   Convert links like doc1.md to doc1/ for JB2 folder URLs.
-
-For directory input, it also uses:
-  --recursive      Convert .md files in subdirectories too.
+SOURCE_DIR is copied to DEST_DIR (which must not be inside it), converting
+the .md files for JB2 and copying everything else. Then `jupyter-book init`
+migrates _config.yml/_toc.yml to myst.yml in DEST_DIR. The JB1 book is not
+modified. A report lists anything that JB2 or its PDF output would drop.
 
 Set JB1_TO_JB2_CONVERTER=/path/to/jb1_to_jb2_myst.py to override the converter path.
 EOF
@@ -61,11 +48,14 @@ fi
 SRC="$1"
 DST="$2"
 
-if [[ -f "$SRC" ]]; then
-  python3 "$CONVERTER" "$SRC" "$DST" --folder-links
-elif [[ -d "$SRC" ]]; then
-  python3 "$CONVERTER" "$SRC" "$DST" --recursive --folder-links
-else
+if [[ ! -e "$SRC" ]]; then
   echo "Error: source is not a file or directory: $SRC" >&2
   exit 1
+fi
+
+python3 "$CONVERTER" "$SRC" "$DST"
+
+if [[ -d "$SRC" && -f "$DST/_config.yml" && ! -f "$DST/myst.yml" ]]; then
+  # init asks for confirmation; `|| true` stops yes's SIGPIPE tripping pipefail.
+  (cd "$DST" && { yes || true; } | jupyter-book init --write-toc)
 fi
