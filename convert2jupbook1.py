@@ -750,7 +750,19 @@ def normalize_table_cell_text(text):
     while lines and not lines[-1].strip():
         lines.pop()
 
-    return "\n".join(lines)
+    return "\n".join(escape_cell_list_marker(line) for line in lines)
+
+
+# A cell line such as "1." or "22." would otherwise be parsed as an (empty)
+# ordered list inside the list-table/flat-table item, and its text is lost.
+# The same happens to a lone "-", "+" or "*".
+CELL_LIST_MARKER_RE = re.compile(r"^(\s*)(\d{1,9}[.)]|[-+*])(?=\s|$)")
+
+
+def escape_cell_list_marker(line):
+    return CELL_LIST_MARKER_RE.sub(
+        lambda m: m.group(1) + m.group(2)[:-1] + "\\" + m.group(2)[-1], line, count=1
+    )
 
 
 def render_cell_paragraphs(elem, current_doc):
